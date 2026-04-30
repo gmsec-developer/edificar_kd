@@ -22,3 +22,15 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+# Archivos temporales y backups
+*.bak
+*.backup
+*.old
+*.tmp
+
+# Archivos personales
+uso github.txt
+
+# Carpetas de entorno
+/storage/app/public/*
+/storage/logs/*
