@@ -1,12 +1,10 @@
-﻿<?php
+<?php
 
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use App\Models\Company;
 use App\Models\User;
-use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Facades\DB;
 
 class InitialCompanySeeder extends Seeder
 {
@@ -21,26 +19,20 @@ class InitialCompanySeeder extends Seeder
             ]
         );
 
-        if (Schema::hasColumn('users', 'company_id')) {
-            User::whereNull('company_id')->update([
-                'company_id' => $company->id,
-            ]);
-        }
+        User::whereNull('company_id')->update([
+            'company_id' => $company->id,
+        ]);
 
-        if (Schema::hasColumn('users', 'status')) {
-            User::whereNull('status')->orWhere('status', '')->update([
-                'status' => 'active',
-            ]);
+        User::whereNull('status')->update([
+            'status' => 'active',
+        ]);
 
-            User::query()->update([
-                'status' => DB::raw("CASE WHEN status = 'pending' THEN 'active' ELSE status END"),
-            ]);
-        }
+        User::where('status', 'pending')->update([
+            'status' => 'active',
+        ]);
 
-        if (Schema::hasColumn('users', 'approved_at')) {
-            User::whereNull('approved_at')->update([
-                'approved_at' => now(),
-            ]);
-        }
+        User::whereNull('approved_at')->update([
+            'approved_at' => now(),
+        ]);
     }
 }

@@ -80,3 +80,7 @@ Route::middleware(['auth', 'permission:settings.edit'])->group(function () {
     Route::get('settings', [App\Http\Controllers\SettingController::class, 'index'])->name('settings.index');
     Route::post('settings', [App\Http\Controllers\SettingController::class, 'update'])->name('settings.update');
 });
+
+Route::middleware(['auth'])->get('/test-company', function () {
+    return auth()->user()->company;
+});
