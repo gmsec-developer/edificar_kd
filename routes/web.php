@@ -11,7 +11,7 @@ Route::get('/', function () {
 
 Route::get('/dashboard', function () {
     return view('dashboard');
-})->middleware(['auth', 'verified'])->name('dashboard');
+})->middleware(['auth','company.active', 'verified'])->name('dashboard');
 
 Route::middleware(['auth', 'company.active'])->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
@@ -19,51 +19,51 @@ Route::middleware(['auth', 'company.active'])->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
-Route::middleware(['auth', 'permission:users.view'])->group(function () {
+Route::middleware(['auth', 'company.active', 'permission:users.view'])->group(function () {
     Route::get('users', [UserController::class, 'index'])->name('users.index');
 });
 
-Route::middleware(['auth', 'permission:users.create'])->group(function () {
+Route::middleware(['auth', 'company.active', 'permission:users.create'])->group(function () {
     Route::get('users/create', [UserController::class, 'create'])->name('users.create');
     Route::post('users', [UserController::class, 'store'])->name('users.store');
 });
 
-Route::middleware(['auth', 'permission:users.edit'])->group(function () {
+Route::middleware(['auth', 'company.active', 'permission:users.edit'])->group(function () {
     Route::get('users/{user}/edit', [UserController::class, 'edit'])->name('users.edit');
     Route::put('users/{user}', [UserController::class, 'update'])->name('users.update');
 });
 
-Route::middleware(['auth', 'permission:users.delete'])->group(function () {
+Route::middleware(['auth', 'company.active', 'permission:users.delete'])->group(function () {
     Route::delete('users/{user}', [UserController::class, 'destroy'])->name('users.destroy');
 });
 
-Route::middleware(['auth', 'permission:users.toggle'])->group(function () {
+Route::middleware(['auth', 'company.active', 'permission:users.toggle'])->group(function () {
     Route::post('users/{id}/toggle', [UserController::class, 'toggle'])->name('users.toggle');
 });
 
-Route::middleware(['auth', 'permission:users.reset'])->group(function () {
+Route::middleware(['auth', 'company.active', 'permission:users.reset'])->group(function () {
     Route::post('users/{id}/reset-password', [UserController::class, 'resetPassword'])->name('users.reset');
 });
 
-Route::middleware(['auth', 'permission:roles.view'])->group(function () {
+Route::middleware(['auth', 'company.active', 'permission:roles.view'])->group(function () {
     Route::get('roles', [RoleController::class, 'index'])->name('roles.index');
 });
 
-Route::middleware(['auth', 'permission:roles.create'])->group(function () {
+Route::middleware(['auth', 'company.active', 'permission:roles.create'])->group(function () {
     Route::get('roles/create', [RoleController::class, 'create'])->name('roles.create');
     Route::post('roles', [RoleController::class, 'store'])->name('roles.store');
 });
 
-Route::middleware(['auth', 'permission:roles.edit'])->group(function () {
+Route::middleware(['auth', 'company.active', 'permission:roles.edit'])->group(function () {
     Route::get('roles/{role}/edit', [RoleController::class, 'edit'])->name('roles.edit');
     Route::put('roles/{role}', [RoleController::class, 'update'])->name('roles.update');
 });
 
-Route::middleware(['auth', 'permission:roles.delete'])->group(function () {
+Route::middleware(['auth', 'company.active', 'permission:roles.delete'])->group(function () {
     Route::delete('roles/{role}', [RoleController::class, 'destroy'])->name('roles.destroy');
 });
 
-Route::middleware(['auth', 'permission:settings.view'])
+Route::middleware(['auth', 'company.active', 'permission:settings.view'])
     ->get('activity-log', [App\Http\Controllers\ActivityLogController::class, 'index'])
     ->name('activity.index');
 
@@ -76,11 +76,29 @@ Route::post('notifications/read', function () {
     return back();
 })->name('notifications.read')->middleware('auth');
 
-Route::middleware(['auth', 'permission:settings.edit'])->group(function () {
+Route::middleware(['auth', 'company.active', 'permission:settings.edit'])->group(function () {
     Route::get('settings', [App\Http\Controllers\SettingController::class, 'index'])->name('settings.index');
     Route::post('settings', [App\Http\Controllers\SettingController::class, 'update'])->name('settings.update');
 });
 
-Route::middleware(['auth'])->get('/test-company', function () {
-    return auth()->user()->company;
+Route::middleware(['auth', 'company.active', 'permission:companies.view'])->group(function () {
+    Route::get('companies', [App\Http\Controllers\CompanyController::class, 'index'])->name('companies.index');
+});
+
+Route::middleware(['auth', 'company.active', 'permission:companies.create'])->group(function () {
+    Route::get('companies/create', [App\Http\Controllers\CompanyController::class, 'create'])->name('companies.create');
+    Route::post('companies', [App\Http\Controllers\CompanyController::class, 'store'])->name('companies.store');
+});
+
+Route::middleware(['auth', 'company.active', 'permission:companies.edit'])->group(function () {
+    Route::get('companies/{company}/edit', [App\Http\Controllers\CompanyController::class, 'edit'])->name('companies.edit');
+    Route::put('companies/{company}', [App\Http\Controllers\CompanyController::class, 'update'])->name('companies.update');
+});
+
+Route::middleware(['auth', 'company.active', 'permission:companies.delete'])->group(function () {
+    Route::delete('companies/{company}', [App\Http\Controllers\CompanyController::class, 'destroy'])->name('companies.destroy');
+});
+
+Route::middleware(['auth', 'company.active', 'permission:companies.toggle'])->group(function () {
+    Route::post('companies/{company}/toggle', [App\Http\Controllers\CompanyController::class, 'toggle'])->name('companies.toggle');
 });
