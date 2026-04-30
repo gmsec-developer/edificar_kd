@@ -1,0 +1,10 @@
+Cuando trabajes y cambies algo
+git status
+git add .
+git commit -m "descripcion del cambio"
+git push
+
+En el otro equipo antes de trabajar
+git pull
+
+Regla de oro, Mau: siempre git pull antes de empezar y git push al terminar.

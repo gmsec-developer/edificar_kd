@@ -1,0 +1,119 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
+
+class UserController extends Controller
+{
+    public function index()
+    {
+        $users = User::all();
+        return view('users.index', compact('users'));
+    }
+
+    public function create()
+    {
+        return view('users.create');
+    }
+
+    public function store(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:150',
+            'email' => 'required|email|unique:users,email',
+            'password' => 'required|min:6',
+            'role' => 'required|string',
+        ]);
+
+        $user = User::create([
+            'name' => $request->name,
+            'email' => $request->email,
+            'password' => Hash::make($request->password),
+            'is_active' => true,
+        ]);
+
+        $user->assignRole($request->role);
+
+        return redirect()->route('users.index')
+            ->with('success', 'Usuario creado correctamente');
+    }
+
+    public function edit(string $id)
+    {
+        $user = User::findOrFail($id);
+        return view('users.edit', compact('user'));
+    }
+
+    public function update(Request $request, string $id)
+    {
+        $user = User::findOrFail($id);
+
+        $request->validate([
+            'name' => 'required|string|max:150',
+            'email' => 'required|email|unique:users,email,' . $user->id,
+            'role' => 'required|string',
+        ]);
+
+        $user->update([
+            'name' => $request->name,
+            'email' => $request->email,
+        ]);
+
+        $user->syncRoles([$request->role]);
+
+        return redirect()->route('users.index')
+            ->with('success', 'Usuario actualizado correctamente');
+    }
+
+    public function toggle($id)
+    {
+        $user = User::findOrFail($id);
+
+        if ($user->hasRole('superadmin')) {
+            return redirect()->route('users.index')
+                ->with('success', 'No puedes desactivar un superadmin');
+        }
+
+        $user->is_active = !$user->is_active;
+        $user->save();
+
+        return redirect()->route('users.index')
+            ->with('success', 'Estado actualizado correctamente');
+    }
+
+    public function destroy(string $id)
+    {
+        $user = User::findOrFail($id);
+
+        if ($user->hasRole('superadmin')) {
+            return redirect()->route('users.index')
+                ->with('success', 'No puedes eliminar un superadmin');
+        }
+
+        $user->delete();
+
+        return redirect()->route('users.index')
+            ->with('success', 'Usuario eliminado correctamente');
+    }
+
+    public function resetPassword($id)
+    {
+        $user = User::findOrFail($id);
+
+        if ($user->hasRole('superadmin')) {
+            return redirect()->route('users.index')
+                ->with('success', 'No puedes resetear un superadmin');
+        }
+
+        $newPassword = \Illuminate\Support\Str::random(8);
+
+        $user->password = \Illuminate\Support\Facades\Hash::make($newPassword);
+        $user->save();
+
+        return redirect()->route('users.index')
+            ->with('success', 'Nueva contraseña: ' . $newPassword);
+    }
+}
