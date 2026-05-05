@@ -1,0 +1,345 @@
+@extends('layouts.app')
+
+@section('content')
+<style>
+    .ekd-page {
+        background: #f4f6f9;
+        padding: 18px;
+        font-size: 15px;
+        color: #111827;
+    }
+
+    .ekd-card {
+        background: #fff;
+        border: 1px solid #d9dee7;
+        border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+        margin-bottom: 16px;
+        overflow: hidden;
+    }
+
+    .ekd-card-header {
+        padding: 10px 14px;
+        background: #f8fafc;
+        border-bottom: 1px solid #d9dee7;
+        font-weight: 700;
+        font-size: 16px;
+        color: #1f2937;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .ekd-card-body {
+        padding: 14px;
+    }
+
+    .ekd-summary-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+    }
+
+    .ekd-summary-item {
+        background: #f8fafc;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 10px;
+    }
+
+    .ekd-label {
+        font-size: 13px;
+        color: #6b7280;
+        margin-bottom: 3px;
+    }
+
+    .ekd-value {
+        font-size: 15px;
+        font-weight: 700;
+        color: #111827;
+    }
+
+    .ekd-table-wrap {
+        overflow-x: auto;
+        max-height: 560px;
+        overflow-y: auto;
+    }
+
+    .ekd-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+        font-size: 14px;
+    }
+
+    .ekd-table th {
+        position: sticky;
+        top: 0;
+        background: #eef2f7;
+        color: #111827;
+        border-bottom: 1px solid #cfd6e1;
+        padding: 7px 9px;
+        white-space: nowrap;
+        font-weight: 700;
+        z-index: 2;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .ekd-table th:hover {
+        background: #dbeafe;
+    }
+
+    .ekd-table td {
+        border-bottom: 1px solid #edf0f5;
+        padding: 6px 9px;
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+
+    .ekd-table tbody tr:nth-child(even) {
+        background: #fafbff;
+    }
+
+    .ekd-table tbody tr:hover {
+        background: #eef6ff;
+    }
+
+    .ekd-text {
+        white-space: normal !important;
+        min-width: 340px;
+    }
+
+    .ekd-material {
+        white-space: normal !important;
+        min-width: 380px;
+    }
+
+    .ekd-num {
+        text-align: right;
+    }
+
+    .ekd-center {
+        text-align: center;
+    }
+
+    .ekd-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #e0ecff;
+        color: #1d4ed8;
+        font-weight: 700;
+        font-size: 13px;
+    }
+
+    .ekd-filter {
+        max-width: 360px;
+        font-size: 14px;
+    }
+
+    .ekd-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        margin-top: 16px;
+    }
+</style>
+
+<div class="ekd-page">
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h3 class="mb-1">Vista previa KitchenDraw</h3>
+            <div class="text-muted">XML + TXT + SCN de respaldo</div>
+        </div>
+        <a href="{{ route('projects.index') }}" class="btn btn-outline-secondary btn-sm">Volver</a>
+    </div>
+
+    <div class="ekd-card">
+        <div class="ekd-card-header">Cabecera del proyecto</div>
+        <div class="ekd-card-body">
+            <div class="ekd-summary-grid">
+                <div class="ekd-summary-item">
+                    <div class="ekd-label">N&deg; Presupuesto</div>
+                    <div class="ekd-value">{{ $header['estimate_id'] ?? '' }}</div>
+                </div>
+                <div class="ekd-summary-item">
+                    <div class="ekd-label">Proyecto</div>
+                    <div class="ekd-value">{{ $header['project_name'] ?? '' }}</div>
+                </div>
+                <div class="ekd-summary-item">
+                    <div class="ekd-label">Cliente</div>
+                    <div class="ekd-value">{{ $header['client_name'] ?? '' }}</div>
+                </div>
+                <div class="ekd-summary-item">
+                    <div class="ekd-label">Empresa</div>
+                    <div class="ekd-value">{{ $header['company_name'] ?? '' }}</div>
+                </div>
+                <div class="ekd-summary-item">
+                    <div class="ekd-label">Dise&ntilde;ador</div>
+                    <div class="ekd-value">{{ $header['designer'] ?? '' }} {{ $header['seller_name'] ?? '' }}</div>
+                </div>
+                <div class="ekd-summary-item">
+                    <div class="ekd-label">Ciudad / Pa&iacute;s</div>
+                    <div class="ekd-value">{{ $header['city'] ?? '' }} / {{ $header['country'] ?? '' }}</div>
+                </div>
+                <div class="ekd-summary-item">
+                    <div class="ekd-label">Estado</div>
+                    <div class="ekd-value">{{ $header['state'] ?? '' }}</div>
+                </div>
+                <div class="ekd-summary-item">
+                    <div class="ekd-label">Total IVA</div>
+                    <div class="ekd-value">{{ $header['currency'] ?? '' }} {{ $header['total_with_tax'] ?? '' }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="ekd-card">
+        <div class="ekd-card-header">
+            <div>M&oacute;dulos / productos cotizados <span class="ekd-badge">{{ count($modules) }}</span></div>
+            <input type="text" class="form-control form-control-sm ekd-filter" placeholder="Filtrar m&oacute;dulos..." onkeyup="filterTable('modulesTable', this.value)">
+        </div>
+
+        <div class="ekd-table-wrap">
+            <table class="ekd-table" id="modulesTable">
+                <thead>
+                    <tr>
+                        <th onclick="sortTable('modulesTable', 0)">No &#8645;</th>
+                        <th onclick="sortTable('modulesTable', 1)">Referencia &#8645;</th>
+                        <th onclick="sortTable('modulesTable', 2)">Descripci&oacute;n / m&oacute;dulo &#8645;</th>
+                        <th onclick="sortTable('modulesTable', 3)">Ancho &#8645;</th>
+                        <th onclick="sortTable('modulesTable', 4)">Alto &#8645;</th>
+                        <th onclick="sortTable('modulesTable', 5)">Profundidad &#8645;</th>
+                        <th onclick="sortTable('modulesTable', 6)">Cantidad &#8645;</th>
+                        <th onclick="sortTable('modulesTable', 7)">P.V. IVA &#8645;</th>
+                        <th onclick="sortTable('modulesTable', 8)">Total IVA &#8645;</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach($modules as $module)
+                        <tr>
+                            <td class="ekd-num">{{ $module['number'] }}</td>
+                            <td><strong>{{ $module['reference'] }}</strong></td>
+                            <td class="ekd-text">{{ $module['description'] }}</td>
+                            <td class="ekd-num">{{ $module['dx'] }}</td>
+                            <td class="ekd-num">{{ $module['dz'] }}</td>
+                            <td class="ekd-num">{{ $module['dy'] }}</td>
+                            <td class="ekd-center">{{ $module['quantity'] }}</td>
+                            <td class="ekd-num">{{ $module['pvp'] }}</td>
+                            <td class="ekd-num"><strong>{{ $module['total'] }}</strong></td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="ekd-card">
+        <div class="ekd-card-header">
+            <div>Despiece <span class="ekd-badge">{{ count($despiece) }}</span></div>
+            <input type="text" class="form-control form-control-sm ekd-filter" placeholder="Filtrar despiece..." onkeyup="filterTable('despieceTable', this.value)">
+        </div>
+
+        <div class="ekd-table-wrap">
+            <table class="ekd-table" id="despieceTable">
+                <thead>
+                    <tr>
+                        <th onclick="sortTable('despieceTable', 0)">No &#8645;</th>
+                        <th onclick="sortTable('despieceTable', 1)">Ref. c&oacute;digo &#8645;</th>
+                        <th onclick="sortTable('despieceTable', 2)">TipoCod &#8645;</th>
+                        <th onclick="sortTable('despieceTable', 3)">Desc. pieza &#8645;</th>
+                        <th onclick="sortTable('despieceTable', 4)">Largo &#8645;</th>
+                        <th onclick="sortTable('despieceTable', 5)">Ancho &#8645;</th>
+                        <th onclick="sortTable('despieceTable', 6)">Material &#8645;</th>
+                        <th onclick="sortTable('despieceTable', 7)">Espesor &#8645;</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach($despiece as $row)
+                        <tr>
+                            <td class="ekd-num">{{ $row['module_number'] }}</td>
+                            <td><strong>{{ $row['module_reference'] }}</strong></td>
+                            <td class="ekd-center">{{ $row['type_code'] }}</td>
+                            <td>{{ $row['part'] }}</td>
+                            <td class="ekd-num">{{ $row['length'] }}</td>
+                            <td class="ekd-num">{{ $row['width'] }}</td>
+                            <td class="ekd-material">{{ $row['material'] }}</td>
+                            <td class="ekd-num">{{ $row['thickness'] }}</td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="ekd-actions">
+        <form action="{{ route('projects.storeFinal') }}" method="POST">
+            @csrf
+            <input type="hidden" name="data" value="{{ json_encode([
+                'header' => $header,
+                'headings' => $headings,
+                'modules' => $modules,
+                'despiece' => $despiece,
+                'files' => $files,
+            ]) }}">
+            <button class="btn btn-success">Guardar Proyecto</button>
+        </form>
+        <a href="{{ route('projects.index') }}" class="btn btn-secondary">Volver</a>
+    </div>
+
+</div>
+
+<script>
+    const sortState = {};
+
+    function normalizeValue(value) {
+        value = (value || '').trim();
+        const numeric = value.replace(',', '.').replace(/[^\d.-]/g, '');
+
+        if (numeric !== '' && !isNaN(numeric)) {
+            return parseFloat(numeric);
+        }
+
+        return value.toLowerCase();
+    }
+
+    function sortTable(tableId, columnIndex) {
+        const table = document.getElementById(tableId);
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+
+        const key = tableId + '_' + columnIndex;
+        sortState[key] = sortState[key] === 'asc' ? 'desc' : 'asc';
+        const direction = sortState[key];
+
+        rows.sort((a, b) => {
+            const aValue = normalizeValue(a.children[columnIndex]?.innerText || '');
+            const bValue = normalizeValue(b.children[columnIndex]?.innerText || '');
+
+            if (typeof aValue === 'number' && typeof bValue === 'number') {
+                return direction === 'asc' ? aValue - bValue : bValue - aValue;
+            }
+
+            return direction === 'asc'
+                ? String(aValue).localeCompare(String(bValue))
+                : String(bValue).localeCompare(String(aValue));
+        });
+
+        rows.forEach(row => tbody.appendChild(row));
+    }
+
+    function filterTable(tableId, searchText) {
+        const table = document.getElementById(tableId);
+        const rows = table.querySelectorAll('tbody tr');
+        const query = (searchText || '').toLowerCase();
+
+        rows.forEach(row => {
+            const text = row.innerText.toLowerCase();
+            row.style.display = text.includes(query) ? '' : 'none';
+        });
+    }
+</script>
+@endsection

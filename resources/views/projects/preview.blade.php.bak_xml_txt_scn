@@ -1,0 +1,135 @@
+﻿@extends('layouts.app')
+
+@section('content')
+<div class="container">
+    <h2>Vista previa del archivo .SCN</h2>
+
+    <div class="card mb-3">
+        <div class="card-header">
+            <strong>Información del Proyecto</strong>
+        </div>
+        <div class="card-body">
+            <p><strong>N° escena:</strong> {{ $header['scene_number'] ?? '' }}</p>
+            <p><strong>Proyecto:</strong> {{ $header['project_name'] ?? '' }}</p>
+            <p><strong>Cliente:</strong> {{ $header['client_name'] ?? '' }}</p>
+            <p><strong>Diseñador:</strong> {{ $header['designer'] ?? '' }}</p>
+            <p><strong>Empresa:</strong> {{ $header['company_name'] ?? '' }}</p>
+            <p><strong>Archivo:</strong> {{ $header['file_name'] ?? '' }}</p>
+            <p><strong>Moneda:</strong> {{ $header['currency'] ?? '' }}</p>
+        </div>
+    </div>
+
+    <h4>Módulos / productos cotizados</h4>
+
+    <table class="table table-bordered table-sm">
+        <thead>
+            <tr>
+                <th>N°</th>
+                <th>Referencia</th>
+                <th>Descripción</th>
+                <th>Cantidad</th>
+                <th>P.V. original</th>
+                <th>Total original</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach($modules as $module)
+                <tr>
+                    <td>{{ $module['id'] }}</td>
+                    <td>{{ $module['reference'] }}</td>
+                    <td>{{ $module['description'] }}</td>
+                    <td>{{ $module['quantity'] }}</td>
+                    <td>{{ $module['pvp_original'] ?? 'Pendiente' }}</td>
+                    <td>{{ $module['total_original'] ?? 'Pendiente' }}</td>
+                </tr>
+            @endforeach
+        </tbody>
+    </table>
+
+    <h4>Despiece detectado</h4>
+
+    
+
+<h4>Despiece por módulo</h4>
+
+    @php
+        $despiecePorModulo = collect($despiece)->groupBy('module_id');
+    @endphp
+
+    @foreach($modules as $module)
+        <div class="card mb-4">
+            <div class="card-header">
+                <strong>Módulo #{{ $module['id'] }}</strong>
+                — {{ $module['reference'] }}
+                @if(!empty($module['dx']) || !empty($module['dy']) || !empty($module['dz']))
+                    <span class="text-muted">
+                        ({{ $module['dx'] ?? '-' }} x {{ $module['dy'] ?? '-' }} x {{ $module['dz'] ?? '-' }})
+                    </span>
+                @endif
+            </div>
+
+            <div class="card-body">
+                @php
+                    $rows = $despiecePorModulo[$module['id']] ?? collect();
+                @endphp
+
+                @if($rows->isEmpty())
+                    <p class="text-muted">Sin despiece detectado.</p>
+                @else
+                    <table class="table table-bordered table-sm">
+                        <thead>
+                            <tr>
+                                <th>Tipo</th>
+                                <th>Pieza</th>
+                                <th>Cant.</th>
+                                <th>Largo</th>
+                                <th>Ancho</th>
+                                <th>Espesor</th>
+                                <th>Material</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($rows as $row)
+                                <tr>
+                                    <td>
+                                        @if($row['type_code'] == 1)
+                                            Pieza
+                                        @elseif($row['type_code'] == 2)
+                                            Puerta/Frente
+                                        @elseif($row['type_code'] == 4)
+                                            Accesorio/Material
+                                        @else
+                                            {{ $row['type_code'] }}
+                                        @endif
+                                    </td>
+                                    <td>{{ $row['part'] }}</td>
+                                    <td>{{ $row['quantity'] }}</td>
+                                    <td>{{ $row['length'] }}</td>
+                                    <td>{{ $row['width'] }}</td>
+                                    <td>{{ $row['thickness'] }}</td>
+                                    <td>{{ $row['material'] ?? $row['material_code'] ?? '' }}</td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                @endif
+            </div>
+        </div>
+    @endforeach
+
+
+    <form action="{{ route('projects.storeFinal') }}" method="POST">
+        @csrf
+
+        <input type="hidden" name="data" value="{{ json_encode([
+            'header' => $header,
+            'modules' => $modules,
+            'despiece' => $despiece,
+        ]) }}">
+
+        <button class="btn btn-success">
+            Guardar Proyecto
+        </button>
+    </form>
+</div>
+@endsection

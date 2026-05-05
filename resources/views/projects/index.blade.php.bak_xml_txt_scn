@@ -1,0 +1,62 @@
+﻿@extends('layouts.app')
+
+@section('content')
+<div class="container">
+    <h2>Proyectos</h2>
+
+    <div class="card">
+        <div class="card-body">
+            Aquí se mostrarán los proyectos (.scn)
+        </div>
+    </div>
+
+    <form action="{{ route('projects.store') }}" method="POST" enctype="multipart/form-data">
+        @csrf
+
+        <div class="mb-3">
+            <label>Archivo .SCN</label>
+            <input type="file" name="scn_file" class="form-control" required>
+        </div>
+
+        <button type="submit" class="btn btn-primary">
+            Subir archivo
+        </button>
+    </form>
+
+    <hr>
+
+    <h4>Proyectos guardados</h4>
+
+    @if($projects->isEmpty())
+        <p>No hay proyectos aún</p>
+    @else
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Nombre</th>
+                    <th>Estado</th>
+                    <th>Fecha</th>
+                    <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach($projects as $project)
+                    <tr>
+                        <td>{{ $project->id }}</td>
+                        <td>{{ $project->name }}</td>
+                        <td>{{ $project->status }}</td>
+                        <td>{{ $project->created_at }}</td>
+                        <td>
+                            <a href="{{ route('projects.show', $project) }}" class="btn btn-sm btn-info">
+                                Ver
+                            </a>
+                        </td>
+                    </tr>
+                @endforeach
+            </tbody>
+        </table>
+    @endif
+
+</div>
+@endsection

@@ -1,0 +1,153 @@
+@extends('layouts.app')
+
+@section('content')
+<div class="container">
+    <h2>Vista previa KitchenDraw</h2>
+
+    <div class="card mb-3">
+        <div class="card-header">
+            <strong>Información del Proyecto</strong>
+        </div>
+        <div class="card-body">
+            <p><strong>N° presupuesto:</strong> {{ $header['estimate_id'] ?? '' }}</p>
+            <p><strong>Proyecto:</strong> {{ $header['project_name'] ?? '' }}</p>
+            <p><strong>Cliente:</strong> {{ $header['client_name'] ?? '' }}</p>
+            <p><strong>Empresa:</strong> {{ $header['company_name'] ?? '' }}</p>
+            <p><strong>Diseñador:</strong> {{ $header['designer'] ?? '' }} - {{ $header['seller_name'] ?? '' }}</p>
+            <p><strong>Ciudad / País:</strong> {{ $header['city'] ?? '' }} / {{ $header['country'] ?? '' }}</p>
+            <p><strong>Estado:</strong> {{ $header['state'] ?? '' }}</p>
+            <p><strong>Total con IVA:</strong> {{ $header['currency'] ?? '' }} {{ $header['total_with_tax'] ?? '' }}</p>
+            <p><strong>XML:</strong> {{ $files['xml'] ?? '' }}</p>
+            <p><strong>TXT:</strong> {{ $files['txt'] ?? '' }}</p>
+            @if(!empty($files['scn']))
+                <p><strong>SCN respaldo:</strong> {{ $files['scn'] }}</p>
+            @endif
+        </div>
+    </div>
+
+    <h4>Ambientes / grupos</h4>
+
+    <table class="table table-bordered table-sm">
+        <thead>
+            <tr>
+                <th>Ambiente</th>
+                <th>Modelo</th>
+                <th>Catálogo</th>
+                <th>Items</th>
+                <th>Total con IVA</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach($headings as $heading)
+                <tr>
+                    <td>{{ $heading['name'] }}</td>
+                    <td>{{ $heading['model'] }}</td>
+                    <td>{{ $heading['catalog'] }}</td>
+                    <td>{{ $heading['items_count'] }}</td>
+                    <td>{{ $heading['total_with_tax'] }}</td>
+                </tr>
+            @endforeach
+        </tbody>
+    </table>
+
+    <h4>Módulos / productos cotizados</h4>
+
+    <table class="table table-bordered table-sm">
+        <thead>
+            <tr>
+                <th>N°</th>
+                <th>Ambiente</th>
+                <th>Referencia</th>
+                <th>Descripción</th>
+                <th>Cant.</th>
+                <th>Medidas</th>
+                <th>PVP</th>
+                <th>Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach($modules as $module)
+                <tr>
+                    <td>{{ $module['number'] }}</td>
+                    <td>{{ $module['environment'] }}</td>
+                    <td>{{ $module['reference'] }}</td>
+                    <td style="max-width: 320px; white-space: pre-wrap;">{{ $module['description'] }}</td>
+                    <td>{{ $module['quantity'] }}</td>
+                    <td>{{ $module['dx'] }} x {{ $module['dy'] }} x {{ $module['dz'] }}</td>
+                    <td>{{ $module['pvp'] }}</td>
+                    <td>{{ $module['total'] }}</td>
+                </tr>
+            @endforeach
+        </tbody>
+    </table>
+
+    <h4>Despiece por módulo</h4>
+
+    @php
+        $despiecePorModulo = collect($despiece)->groupBy('module_number');
+        $modulesByNumber = collect($modules)->keyBy('number');
+    @endphp
+
+    @foreach($despiecePorModulo as $moduleNumber => $rows)
+        @php
+            $module = $modulesByNumber[$moduleNumber] ?? null;
+        @endphp
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <strong>Módulo #{{ $moduleNumber }}</strong>
+                — {{ $rows->first()['module_reference'] ?? '' }}
+                @if($module)
+                    <span class="text-muted"> | {{ $module['description'] }}</span>
+                @endif
+            </div>
+
+            <div class="card-body">
+                <table class="table table-bordered table-sm">
+                    <thead>
+                        <tr>
+                            <th>Tipo</th>
+                            <th>Pieza</th>
+                            <th>Cant.</th>
+                            <th>Largo</th>
+                            <th>Ancho</th>
+                            <th>Espesor</th>
+                            <th>Cód. Material</th>
+                            <th>Material</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach($rows as $row)
+                            <tr>
+                                <td>{{ $row['type_name'] }}</td>
+                                <td>{{ $row['part'] }}</td>
+                                <td>{{ $row['quantity'] }}</td>
+                                <td>{{ $row['length'] }}</td>
+                                <td>{{ $row['width'] }}</td>
+                                <td>{{ $row['thickness'] }}</td>
+                                <td>{{ $row['material_code'] }}</td>
+                                <td>{{ $row['material'] }}</td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    @endforeach
+
+    <form action="{{ route('projects.storeFinal') }}" method="POST">
+        @csrf
+
+        <input type="hidden" name="data" value="{{ json_encode([
+            'header' => $header,
+            'headings' => $headings,
+            'modules' => $modules,
+            'despiece' => $despiece,
+            'files' => $files,
+        ]) }}">
+
+        <button class="btn btn-success">Guardar Proyecto</button>
+        <a href="{{ route('projects.index') }}" class="btn btn-secondary">Volver</a>
+    </form>
+</div>
+@endsection

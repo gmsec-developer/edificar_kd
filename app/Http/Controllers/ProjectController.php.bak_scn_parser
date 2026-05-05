@@ -1,0 +1,204 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Project;
+use Illuminate\Http\Request;
+use App\Models\Price;
+
+class ProjectController extends Controller
+{
+    /**
+     * Display a listing of the resource.
+     */
+    public function index()
+    {
+        $projects = Project::where('company_id', auth()->user()->company_id)
+            ->latest()
+            ->get();
+
+        return view('projects.index', compact('projects'));
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     */
+    public function create()
+    {
+        //
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     */
+
+
+    public function store(Request $request)
+    {
+        $request->validate([
+            'scn_file' => 'required|file',
+        ]);
+
+        $file = $request->file('scn_file');
+
+        $content = file_get_contents($file->getRealPath());
+
+        preg_match_all('/[A-Za-z0-9_\-\/\\\\:\.\s]{4,}/', $content, $matches);
+
+        $strings = array_values(array_unique(array_map('trim', $matches[0])));
+        $strings = array_filter($strings);
+
+        $header = [
+            'designer' => $strings[2] ?? null,
+            'project_name' => trim(($strings[3] ?? '') . 'Ñ' . ($strings[4] ?? '')),
+            'company_name' => $strings[5] ?? null,
+            'client_name' => trim(($strings[7] ?? '') . ' ' . ($strings[6] ?? '')),
+            'file_name' => $file->getClientOriginalName(),
+        ];
+
+        $filtered = [];
+
+        foreach ($strings as $str) {
+            if (str_contains($str, 'C:\\')) continue;
+            if (strlen($str) < 4) continue;
+            if (ctype_digit($str)) continue;
+
+            $filtered[] = $str;
+        }
+
+        $codes = [];
+        $modules = [];
+        $elements = [];
+        $others = [];
+
+        foreach ($filtered as $str) {
+            if (preg_match('/\d{4,}/', $str)) {
+                $codes[] = $str;
+                continue;
+            }
+
+            if (str_contains($str, 'PUER') || str_contains($str, 'INTER') || str_contains($str, 'SPOT')) {
+                $elements[] = $str;
+                continue;
+            }
+
+            if (preg_match('/^[A-Z\- ]*\d+$/', $str)) {
+                $modules[] = $str;
+                continue;
+            }
+
+            $others[] = $str;
+        }
+
+        //
+        // 🔥 DEBUG DE MÓDULOS (NUEVO)
+        //
+
+        $debugModules = [];
+
+        for ($i = 0; $i < count($strings); $i++) {
+
+            $current = $strings[$i];
+            $next = $strings[$i + 1] ?? null;
+            $next2 = $strings[$i + 2] ?? null;
+            $next3 = $strings[$i + 3] ?? null;
+
+            if (is_numeric($current) && $next && preg_match('/[A-Z\- ]*\d+/', $next)) {
+
+                $debugModules[] = [
+                    'id' => $current,
+                    'ref' => $next,
+                    'desc' => $next2,
+                    'extra' => $next3,
+                ];
+            }
+        }
+
+        echo '<pre>';
+        print_r($debugModules);
+        echo '</pre>';
+        exit;
+}
+
+
+
+    
+
+    public function storeFinal(Request $request)
+    {
+        $data = json_decode($request->input('data'), true);
+
+        Project::create([
+            'company_id' => auth()->user()->company_id,
+            'user_id' => auth()->id(),
+            'name' => 'Proyecto SCN',
+            'status' => 'processed',
+            'scn_data' => json_encode($data),
+        ]);
+
+        return redirect()->route('projects.index')
+            ->with('success', 'Proyecto guardado correctamente');
+    }
+
+
+    /**
+     * Display the specified resource.
+     */
+    public function show(Project $project)
+    {
+        // Seguridad multiempresa
+        if ($project->company_id !== auth()->user()->company_id) {
+            abort(403);
+        }
+
+        $data = json_decode($project->scn_data, true);
+
+        $total = 0;
+
+        // Módulos
+        foreach ($data['modules'] ?? [] as $module) {
+            $price = Price::where('code', $module)->first();
+            if ($price) {
+                $total += $price->price;
+            }
+        }
+
+        // Elementos
+        foreach ($data['elements'] ?? [] as $element) {
+            $price = Price::where('code', $element)->first();
+            if ($price) {
+                $total += $price->price;
+            }
+        }
+
+        return view('projects.show', [
+            'project' => $project,
+            'data' => $data,
+            'total' => $total,
+        ]);
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     */
+    public function edit(Project $project)
+    {
+        //
+    }
+
+    /**
+     * Update the specified resource in storage.
+     */
+    public function update(Request $request, Project $project)
+    {
+        //
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     */
+    public function destroy(Project $project)
+    {
+        //
+    }
+}

@@ -1,0 +1,258 @@
+@extends('layouts.app')
+
+@section('content')
+<style>
+    .kd-wrapper {
+        background: #c9c9c9;
+        padding: 10px;
+        font-size: 12px;
+        color: #000;
+    }
+
+    .kd-panel {
+        background: #f2f2f2;
+        border: 1px solid #999;
+        padding: 8px;
+        margin-bottom: 10px;
+    }
+
+    .kd-title {
+        font-weight: bold;
+        margin-bottom: 6px;
+        font-size: 13px;
+    }
+
+    .kd-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+        font-size: 12px;
+    }
+
+    .kd-table th {
+        background: #e5e5e5;
+        border: 1px solid #9a9a9a;
+        padding: 2px 4px;
+        font-weight: normal;
+        text-align: left;
+        white-space: nowrap;
+    }
+
+    .kd-table td {
+        border: 1px solid #b5b5b5;
+        padding: 2px 4px;
+        vertical-align: top;
+        white-space: nowrap;
+    }
+
+    .kd-table tbody tr:nth-child(even) {
+        background: #dcd9ff;
+    }
+
+    .kd-table tbody tr:nth-child(odd) {
+        background: #ffffff;
+    }
+
+    .kd-number {
+        text-align: right;
+    }
+
+    .kd-center {
+        text-align: center;
+    }
+
+    .kd-footer {
+        background: #efefef;
+        border: 1px solid #999;
+        padding: 8px;
+        display: flex;
+        gap: 25px;
+        align-items: center;
+        font-size: 12px;
+    }
+
+    .kd-box {
+        background: white;
+        border: 1px solid #aaa;
+        padding: 3px 8px;
+        min-width: 90px;
+        display: inline-block;
+    }
+
+    .kd-scroll {
+        overflow-x: auto;
+        max-height: 520px;
+        overflow-y: auto;
+        border: 1px solid #999;
+    }
+
+    .kd-actions {
+        margin-top: 12px;
+        display: flex;
+        gap: 8px;
+    }
+</style>
+
+<div class="kd-wrapper">
+
+    {{-- CABECERA COMPLETA --}}
+    <div class="kd-panel">
+        <div class="kd-title">Informaciones comerciales - Datos del cliente</div>
+
+        <table class="kd-table">
+            <tbody>
+                <tr>
+                    <td><strong>N°</strong></td>
+                    <td>{{ $header['estimate_id'] ?? '' }}</td>
+                    <td><strong>Vendedor</strong></td>
+                    <td>{{ $header['designer'] ?? '' }} {{ $header['seller_name'] ?? '' }}</td>
+                    <td><strong>Estado</strong></td>
+                    <td>{{ $header['state'] ?? '' }}</td>
+                </tr>
+                <tr>
+                    <td><strong>Empresa</strong></td>
+                    <td>{{ $header['company_name'] ?? '' }}</td>
+                    <td><strong>Proyecto</strong></td>
+                    <td>{{ $header['project_name'] ?? '' }}</td>
+                    <td><strong>Moneda</strong></td>
+                    <td>{{ $header['currency'] ?? '' }}</td>
+                </tr>
+                <tr>
+                    <td><strong>Cliente</strong></td>
+                    <td>{{ $header['client_name'] ?? '' }}</td>
+                    <td><strong>Ciudad</strong></td>
+                    <td>{{ $header['city'] ?? '' }}</td>
+                    <td><strong>País</strong></td>
+                    <td>{{ $header['country'] ?? '' }}</td>
+                </tr>
+                <tr>
+                    <td><strong>XML</strong></td>
+                    <td>{{ $files['xml'] ?? '' }}</td>
+                    <td><strong>TXT</strong></td>
+                    <td>{{ $files['txt'] ?? '' }}</td>
+                    <td><strong>SCN</strong></td>
+                    <td>{{ $files['scn'] ?? 'No cargado' }}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    {{-- PRODUCTOS --}}
+    <div class="kd-panel">
+        <div class="kd-title">Productos cotizados</div>
+
+        <div class="kd-scroll">
+            <table class="kd-table">
+                <thead>
+                    <tr>
+                        <th>N°</th>
+                        <th>Referencia</th>
+                        <th>Descripción</th>
+                        <th>Cantidad</th>
+                        <th>P.V. IVA</th>
+                        <th>Total IVA</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach($modules as $module)
+                        <tr>
+                            <td class="kd-number">{{ $module['number'] }}</td>
+                            <td>{{ $module['reference'] }}</td>
+                            <td style="white-space: normal; min-width: 350px;">{{ $module['description'] }}</td>
+                            <td class="kd-center">{{ $module['quantity'] }}</td>
+                            <td class="kd-number">{{ $module['pvp'] }}</td>
+                            <td class="kd-number">{{ $module['total'] }}</td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {{-- DESPIECE --}}
+    <div class="kd-panel">
+        <div class="kd-title">Codificación detallada</div>
+
+        @php
+            $modulesByNumber = collect($modules)->keyBy('number');
+        @endphp
+
+        <div class="kd-scroll">
+            <table class="kd-table">
+                <thead>
+                    <tr>
+                        <th>N°</th>
+                        <th>Ref. Objeto</th>
+                        <th>Desc. objeto</th>
+                        <th>Cod.</th>
+                        <th>Desc. pieza</th>
+                        <th>Cantid</th>
+                        <th>L (Largo)</th>
+                        <th>A</th>
+                        <th>Sentido hilo</th>
+                        <th>Material</th>
+                        <th>E</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach($despiece as $row)
+                        @php
+                            $module = $modulesByNumber[$row['module_number']] ?? null;
+                        @endphp
+                        <tr>
+                            <td class="kd-number">{{ $row['module_number'] }}</td>
+                            <td>{{ $row['module_reference'] }}</td>
+                            <td style="white-space: normal; min-width: 220px;">
+                                {{ $module['description'] ?? '' }}
+                            </td>
+                            <td class="kd-center">{{ $row['type_code'] }}</td>
+                            <td>{{ $row['part'] }}</td>
+                            <td class="kd-center">{{ $row['quantity'] }}</td>
+                            <td class="kd-number">{{ $row['length'] }}</td>
+                            <td class="kd-number">{{ $row['width'] }}</td>
+                            <td class="kd-center">I</td>
+                            <td style="white-space: normal; min-width: 260px;">{{ $row['material'] }}</td>
+                            <td class="kd-number">{{ $row['thickness'] }}</td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {{-- TOTALES --}}
+    <div class="kd-footer">
+        <div>
+            Total IVA incluido:
+            <span class="kd-box">{{ $header['total_with_tax'] ?? '' }}</span>
+        </div>
+
+        <div>
+            Total neto IVA:
+            <span class="kd-box">{{ $header['total_with_tax'] ?? '' }}</span>
+        </div>
+
+        <div>
+            Total neto IVA no:
+            <span class="kd-box">{{ $header['total_without_tax'] ?? '' }}</span>
+        </div>
+    </div>
+
+    <div class="kd-actions">
+        <form action="{{ route('projects.storeFinal') }}" method="POST">
+            @csrf
+            <input type="hidden" name="data" value="{{ json_encode([
+                'header' => $header,
+                'headings' => $headings,
+                'modules' => $modules,
+                'despiece' => $despiece,
+                'files' => $files,
+            ]) }}">
+            <button class="btn btn-success">Guardar Proyecto</button>
+        </form>
+
+        <a href="{{ route('projects.index') }}" class="btn btn-secondary">Volver</a>
+    </div>
+
+</div>
+@endsection

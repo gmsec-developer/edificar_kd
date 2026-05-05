@@ -1,0 +1,445 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Project;
+use Illuminate\Http\Request;
+
+class ProjectController extends Controller
+{
+    public function index()
+    {
+        $projects = Project::where('company_id', auth()->user()->company_id)
+            ->latest()
+            ->get();
+
+        return view('projects.index', compact('projects'));
+    }
+
+    public function create()
+    {
+        //
+    }
+
+    public function store(Request $request)
+    {
+        $request->validate([
+            'scn_file' => 'required|file',
+        ]);
+
+        $file = $request->file('scn_file');
+        $parsed = $this->parseKitchenDrawScene($file);
+
+        return view('projects.preview', $parsed);
+    }
+
+    public function storeFinal(Request $request)
+    {
+        $data = json_decode($request->input('data'), true);
+
+        Project::create([
+            'company_id' => auth()->user()->company_id,
+            'user_id' => auth()->id(),
+            'name' => $data['header']['project_name'] ?? 'Proyecto SCN',
+            'status' => 'processed',
+            'scn_data' => json_encode($data),
+        ]);
+
+        return redirect()->route('projects.index')
+            ->with('success', 'Proyecto guardado correctamente');
+    }
+
+    public function show(Project $project)
+    {
+        if ($project->company_id !== auth()->user()->company_id) {
+            abort(403);
+        }
+
+        $data = json_decode($project->scn_data, true);
+
+        return view('projects.show', [
+            'project' => $project,
+            'data' => $data,
+            'total' => 0,
+        ]);
+    }
+
+    public function edit(Project $project)
+    {
+        //
+    }
+
+    public function update(Request $request, Project $project)
+    {
+        //
+    }
+
+    public function destroy(Project $project)
+    {
+        //
+    }
+
+    private function parseKitchenDrawScene($file): array
+    {
+        $content = file_get_contents($file->getRealPath());
+
+        preg_match_all('/[A-Za-z0-9_\-\/\\\\:\.\s,!]{3,}/', $content, $matches, PREG_OFFSET_CAPTURE);
+
+        $strings = [];
+
+        foreach ($matches[0] as $match) {
+            $value = trim($match[0]);
+
+            if ($value === '') {
+                continue;
+            }
+
+            $strings[] = [
+                'offset' => $match[1],
+                'value' => $value,
+            ];
+        }
+
+        $values = array_column($strings, 'value');
+
+        $header = [
+            'scene_number' => $values[2] ?? null,
+            'designer' => $values[3] ?? null,
+            'language' => $values[4] ?? null,
+            'currency' => $values[5] ?? null,
+            'project_name' => $values[6] ?? null,
+            'company_name' => $values[7] ?? null,
+            'client_name' => trim(($values[9] ?? '') . ' ' . ($values[8] ?? '')),
+            'file_name' => $file->getClientOriginalName(),
+        ];
+
+        $modules = $this->extractProductsFromScnBinary($content);
+        $despiece = $this->extractDespieceFromScn($content, $strings, $modules);
+
+        return [
+            'header' => $header,
+            'modules' => $modules,
+            'despiece' => $despiece,
+            'raw_strings_count' => count($strings),
+        ];
+    }
+
+    private function extractProductsFromScnBinary(string $content): array
+    {
+        $modules = [];
+        $seenOrders = [];
+
+        foreach (['CUBIK06', 'TEMPO06'] as $system) {
+            $offset = 0;
+
+            while (($pos = strpos($content, $system, $offset)) !== false) {
+                $reference = $this->readCString($content, $pos + 16, 60);
+
+                if (!$this->isValidReference($reference)) {
+                    $offset = $pos + 1;
+                    continue;
+                }
+
+                $order = $this->readUInt32($content, $pos + 351);
+                $dx = $this->readUInt32($content, $pos + 76);
+                $dy = $this->readUInt32($content, $pos + 82);
+                $dz = $this->readUInt32($content, $pos + 144);
+
+                if (!$order || $order < 1 || $order > 500) {
+                    $offset = $pos + 1;
+                    continue;
+                }
+
+                if (isset($seenOrders[$order])) {
+                    $offset = $pos + 1;
+                    continue;
+                }
+
+                $seenOrders[$order] = true;
+
+                $modules[] = [
+                    'id' => $order,
+                    'reference' => $reference,
+                    'system' => $system,
+                    'offset' => $pos,
+                    'description' => 'Pendiente de interpretar',
+                    'quantity' => 1,
+                    'dx' => $dx ?: null,
+                    'dy' => $dy ?: null,
+                    'dz' => $dz ?: null,
+                    'pvp_original' => null,
+                    'total_original' => null,
+                ];
+
+                $offset = $pos + 1;
+            }
+        }
+
+        usort($modules, fn ($a, $b) => $a['id'] <=> $b['id']);
+
+        return $modules;
+    }
+
+    private function extractDespieceFromScn(string $content, array $strings, array $modules): array
+    {
+        $despiece = [];
+
+        foreach ($modules as $index => $module) {
+            $moduleId = (int) $module['id'];
+            $moduleRef = $module['reference'];
+
+            $start = $module['offset'] ?? 0;
+            $end = $modules[$index + 1]['offset'] ?? strlen($content);
+
+            foreach ($strings as $item) {
+                if ($item['offset'] <= $start || $item['offset'] >= $end) {
+                    continue;
+                }
+
+                $piece = $item['value'];
+
+                if (!$this->looksLikePieceCode($piece)) {
+                    continue;
+                }
+
+                $materialCode = $this->findNearestMaterialCode($strings, $item['offset'], $end);
+                $typeCode = $this->detectPartType($piece);
+
+                if ($typeCode === 2) {
+                    $measurements = $this->extractDoorMeasurements($content, $strings, $item['offset'], $module, $materialCode);
+                } else {
+                    $measurements = $this->extractMeasurementsBeforePiece($content, $item['offset'], $module);
+                }
+
+                $row = [
+                    'module_id' => $moduleId,
+                    'module_reference' => $moduleRef,
+                    'type_code' => $typeCode,
+                    'part' => $piece,
+                    'quantity' => $measurements['quantity'],
+                    'length' => $measurements['length'],
+                    'width' => $measurements['width'],
+                    'thickness' => $measurements['thickness'],
+                    'material_code' => $materialCode,
+                    'material' => $materialCode ? 'Material ' . $materialCode : 'Pendiente catálogo/material',
+                    'price' => null,
+                ];
+
+                $key = implode('|', [
+                    $row['module_id'],
+                    $row['module_reference'],
+                    $row['part'],
+                    $row['quantity'],
+                    $row['length'],
+                    $row['width'],
+                    $row['thickness'],
+                    $row['material_code'],
+                ]);
+
+                $despiece[$key] = $row;
+            }
+        }
+
+        return array_values($despiece);
+    }
+
+    private function extractMeasurementsBeforePiece(string $content, int $pieceOffset, array $module): array
+    {
+        $length = $this->readUInt16($content, $pieceOffset - 691);
+        $width = $this->readUInt16($content, $pieceOffset - 687);
+        $thickness = $this->readUInt16($content, $pieceOffset - 147);
+
+        if ($length === null || $length < 40 || $length > 3000) {
+            $length = null;
+        }
+
+        if ($width === null || $width < 40 || $width > 3000) {
+            $width = null;
+        }
+
+        if ($thickness === null || !in_array($thickness, [6, 15, 19, 30], true)) {
+            $thickness = null;
+        }
+
+        return [
+            'quantity' => 1,
+            'length' => $length,
+            'width' => $width,
+            'thickness' => $thickness,
+        ];
+    }
+
+    private function extractDoorMeasurements(string $content, array $strings, int $pieceOffset, array $module, ?string $materialCode): array
+    {
+        $length = null;
+        $width = null;
+
+        if (!empty($module['dx'])) {
+            $length = max(0, (int) $module['dx'] - 6);
+        }
+
+        $start = $pieceOffset;
+        $end = min(strlen($content), $pieceOffset + 6000);
+
+        $candidates = [];
+
+        for ($pos = $start; $pos <= $end - 2; $pos++) {
+            $value = $this->readUInt16($content, $pos);
+
+            if ($value && $value >= 100 && $value <= 3000) {
+                $candidates[] = $value;
+            }
+        }
+
+        $moduleDims = array_filter([
+            $module['dy'] ?? null,
+            $module['dz'] ?? null,
+        ]);
+
+        if (!empty($moduleDims) && !empty($candidates)) {
+            $best = null;
+            $bestDiff = PHP_INT_MAX;
+
+            foreach ($candidates as $candidate) {
+                foreach ($moduleDims as $dim) {
+                    $diff = abs($candidate - $dim);
+
+                    if ($diff < $bestDiff) {
+                        $bestDiff = $diff;
+                        $best = $candidate;
+                    }
+                }
+            }
+
+            $width = $best;
+        }
+
+        $thickness = null;
+
+        if ($materialCode === '01007') {
+            $thickness = 19;
+        } elseif ($materialCode === '01006' || $materialCode === '01042') {
+            $thickness = 15;
+        } elseif ($materialCode === '01017') {
+            $thickness = 6;
+        }
+
+        return [
+            'quantity' => 1,
+            'length' => $length,
+            'width' => $width,
+            'thickness' => $thickness,
+        ];
+    }
+
+    private function readCString(string $content, int $offset, int $maxLength = 80): string
+    {
+        $slice = substr($content, $offset, $maxLength);
+        $zero = strpos($slice, "\0");
+
+        if ($zero !== false) {
+            $slice = substr($slice, 0, $zero);
+        }
+
+        return trim($slice);
+    }
+
+    private function readUInt32(string $content, int $offset): ?int
+    {
+        if ($offset < 0 || $offset + 4 > strlen($content)) {
+            return null;
+        }
+
+        $data = unpack('V', substr($content, $offset, 4));
+
+        return $data[1] ?? null;
+    }
+
+    private function readUInt16(string $content, int $offset): ?int
+    {
+        if ($offset < 0 || $offset + 2 > strlen($content)) {
+            return null;
+        }
+
+        $data = unpack('v', substr($content, $offset, 2));
+
+        return $data[1] ?? null;
+    }
+
+    private function isValidReference(?string $reference): bool
+    {
+        if (!$reference) {
+            return false;
+        }
+
+        if (strlen($reference) < 3 || strlen($reference) > 40) {
+            return false;
+        }
+
+        $noise = [
+            '-DT',
+            '.',
+            '0601701___0',
+            'Muebles Eco-participaci',
+            'A la commande',
+            'A la livraison',
+            'A la pose',
+        ];
+
+        if (in_array($reference, $noise, true)) {
+            return false;
+        }
+
+        return preg_match('/[A-Z]/', $reference);
+    }
+
+    private function looksLikePieceCode(string $value): bool
+    {
+        if (strlen($value) < 4 || strlen($value) > 40) {
+            return false;
+        }
+
+        $noise = [
+            'CUBIK06',
+            'TEMPO06',
+            '-DT',
+            '.',
+            'Muebles Eco-participaci',
+            '0601701___0',
+        ];
+
+        if (in_array($value, $noise, true)) {
+            return false;
+        }
+
+        return preg_match('/^(PUER|INTER|FREN|COST|ASIE|REPI|REFU|RESP|FUST|TAPA|CTUBO|PARA|COS-)/', $value);
+    }
+
+    private function detectPartType(string $part): int
+    {
+        if (preg_match('/^(PUER|INTER|FREN)/', $part)) {
+            return 2;
+        }
+
+        if (preg_match('/^(COST|ASIE|REPI|REFU|RESP|FUST|TAPA|CTUBO|PARA|COS-)/', $part)) {
+            return 1;
+        }
+
+        return 4;
+    }
+
+    private function findNearestMaterialCode(array $strings, int $pieceOffset, int $endOffset): ?string
+    {
+        foreach ($strings as $item) {
+            if ($item['offset'] <= $pieceOffset || $item['offset'] > $endOffset) {
+                continue;
+            }
+
+            if (preg_match('/^0\d{4}$/', $item['value'])) {
+                return $item['value'];
+            }
+        }
+
+        return null;
+    }
+}

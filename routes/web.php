@@ -67,6 +67,12 @@ Route::middleware(['auth', 'company.active', 'permission:settings.view'])
     ->get('activity-log', [App\Http\Controllers\ActivityLogController::class, 'index'])
     ->name('activity.index');
 
+Route::middleware(['auth', 'company.active'])->group(function () {
+    Route::resource('projects', App\Http\Controllers\ProjectController::class);
+});
+
+Route::post('projects/store-final', [\App\Http\Controllers\ProjectController::class, 'storeFinal'])->name('projects.storeFinal');
+
 require __DIR__.'/auth.php';
 
 Route::post('notifications/read', function () {
@@ -102,3 +108,4 @@ Route::middleware(['auth', 'company.active', 'permission:companies.delete'])->gr
 Route::middleware(['auth', 'company.active', 'permission:companies.toggle'])->group(function () {
     Route::post('companies/{company}/toggle', [App\Http\Controllers\CompanyController::class, 'toggle'])->name('companies.toggle');
 });
+
