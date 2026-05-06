@@ -110,7 +110,3 @@ Route::middleware(['auth', 'company.active', 'permission:companies.toggle'])->gr
     Route::post('companies/{company}/toggle', [App\Http\Controllers\CompanyController::class, 'toggle'])->name('companies.toggle');
 });
 
-
-Route::resource('material-prices', MaterialPriceController::class)
-    ->only(['index', 'edit', 'update'])
-    ->middleware(['auth', 'company.active']);

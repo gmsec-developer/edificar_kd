@@ -83,11 +83,6 @@
                 </a>
             @endcan
 
-            <a href="{{ route('material-prices.index') }}" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-gray-800">
-                <span>💲</span>
-                <span x-show="sidebarOpen">Costos materiales</span>
-            </a>
-
             <a href="{{ route('profile.edit') }}" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-gray-800">
                 <span>👤</span>
                 <span x-show="sidebarOpen">Mi perfil</span>

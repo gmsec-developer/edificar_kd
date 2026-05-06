@@ -8,6 +8,17 @@ use Illuminate\Http\Request;
 
 class ProjectController extends Controller
 {
+    private array $allowedCatalogs = [
+        "ACCE0416",
+        "CUBIK06",
+        "INGOLA06",
+        "LINALT06",
+        "LINBAJ06",
+        "RANUTS06",
+        "VINTAG06",
+        "ADVANC06",
+        "TEMPO06",
+    ];
     public function index()
     {
         $projects = Project::where('company_id', auth()->user()->company_id)
@@ -38,8 +49,6 @@ class ProjectController extends Controller
             'scn_file' => 'nullable|file',
         ]);
 
-        $this->validateFileExtensions($request);
-
         $xmlFile = $request->file('xml_file');
         $txtFile = $request->file('txt_file');
         $scnFile = $request->file('scn_file');
@@ -47,9 +56,7 @@ class ProjectController extends Controller
         $xmlData = $this->parseKitchenDrawXml($xmlFile);
         $despiece = $this->parseKitchenDrawTxt($txtFile);
 
-        $this->syncMaterialPricesFromDespiece($despiece);
-
-        $parsedData = [
+        return view('projects.preview', [
             'header' => $xmlData['header'],
             'headings' => $xmlData['headings'],
             'modules' => $xmlData['modules'],
@@ -59,17 +66,6 @@ class ProjectController extends Controller
                 'txt' => $txtFile->getClientOriginalName(),
                 'scn' => $scnFile ? $scnFile->getClientOriginalName() : null,
             ],
-        ];
-
-        $validation = $this->validateParsedProject($parsedData, true);
-
-        return view('projects.preview', [
-            'header' => $parsedData['header'],
-            'headings' => $parsedData['headings'],
-            'modules' => $parsedData['modules'],
-            'despiece' => $parsedData['despiece'],
-            'files' => $parsedData['files'],
-            'validation' => $validation,
         ]);
     }
 
@@ -77,28 +73,16 @@ class ProjectController extends Controller
     {
         $data = json_decode($request->input('data'), true);
 
-        if (!$data) {
-            return back()->withErrors(['data' => 'No se recibieron datos validos para guardar.']);
-        }
-
-        $validation = $this->validateParsedProject($data, true);
-
-        if (($validation['critical_count'] ?? 0) > 0) {
-            return back()->withErrors([
-                'validation' => 'No se puede guardar la validacion tecnica porque existen errores criticos pendientes.',
-            ]);
-        }
-
         Project::create([
             'company_id' => auth()->user()->company_id,
             'user_id' => auth()->id(),
             'name' => $data['header']['project_name'] ?? 'Proyecto KitchenDraw',
-            'status' => 'technical_validated',
+            'status' => 'processed',
             'scn_data' => json_encode($data),
         ]);
 
         return redirect()->route('projects.index')
-            ->with('success', 'Validacion tecnica guardada correctamente.');
+            ->with('success', 'Proyecto guardado correctamente');
     }
 
     public function show(Project $project)
@@ -109,54 +93,10 @@ class ProjectController extends Controller
 
         $data = json_decode($project->scn_data, true);
 
-        $materialPrices = MaterialPrice::where('company_id', auth()->user()->company_id)
-            ->where('is_active', true)
-            ->get()
-            ->keyBy(function ($item) {
-                return $item->material_code . '|' . $item->color_code;
-            });
-
-        $costRows = [];
-
-        foreach (($data['despiece'] ?? []) as $row) {
-            $length = (float) ($row['length'] ?? 0);
-            $width = (float) ($row['width'] ?? 0);
-            $quantity = (float) ($row['quantity'] ?? 0);
-
-            $areaM2 = ($length > 0 && $width > 0 && $quantity > 0)
-                ? (($length / 1000) * ($width / 1000) * $quantity)
-                : 0;
-
-            $key = ($row['material_code'] ?? '') . '|' . ($row['color_code'] ?? '');
-            $price = $materialPrices[$key] ?? null;
-
-            $unitCost = $price ? (float) $price->unit_cost : null;
-            $totalCost = $unitCost !== null ? $areaM2 * $unitCost : null;
-
-            $costRows[] = [
-                'module_number' => $row['module_number'] ?? '',
-                'module_reference' => $row['module_reference'] ?? '',
-                'type_code' => $row['type_code'] ?? '',
-                'part' => $row['part'] ?? '',
-                'quantity' => $quantity,
-                'length' => $length,
-                'width' => $width,
-                'area_m2' => $areaM2,
-                'material_code' => $row['material_code'] ?? '',
-                'material' => $row['material'] ?? '',
-                'color_code' => $row['color_code'] ?? '',
-                'color_description' => $row['color_description'] ?? '',
-                'unit_cost' => $unitCost,
-                'total_cost' => $totalCost,
-                'found' => $price ? true : false,
-            ];
-        }
-
         return view('projects.show', [
             'project' => $project,
             'data' => $data,
             'total' => 0,
-            'costRows' => $costRows,
         ]);
     }
 
@@ -175,142 +115,10 @@ class ProjectController extends Controller
         //
     }
 
-    private function validateFileExtensions(Request $request): void
-    {
-        $rules = [
-            'xml_file' => 'xml',
-            'txt_file' => 'txt',
-            'scn_file' => 'scn',
-        ];
-
-        foreach ($rules as $field => $extension) {
-            $file = $request->file($field);
-
-            if (!$file) {
-                continue;
-            }
-
-            if (strtolower($file->getClientOriginalExtension()) !== $extension) {
-                abort(422, 'El archivo ' . $field . ' debe tener extension .' . $extension . '.');
-            }
-        }
-    }
-
-    private function validateParsedProject(array $data, bool $checkDuplicates = false): array
-    {
-        $critical = [];
-        $warnings = [];
-
-        $header = $data['header'] ?? [];
-        $modules = $data['modules'] ?? [];
-        $despiece = $data['despiece'] ?? [];
-
-        if (empty($header['project_name'])) {
-            $critical[] = 'No se encontro nombre de proyecto.';
-        }
-
-        if (empty($header['client_name'])) {
-            $critical[] = 'No se encontro nombre de cliente.';
-        }
-
-        if (count($modules) === 0) {
-            $critical[] = 'No se encontraron modulos en el XML.';
-        }
-
-        if (count($despiece) === 0) {
-            $critical[] = 'No se encontro despiece en el TXT.';
-        }
-
-        $moduleNumbers = collect($modules)->pluck('number')->map(fn($n) => (int) $n)->unique();
-        $despieceNumbers = collect($despiece)->pluck('module_number')->map(fn($n) => (int) $n)->unique();
-
-        $modulesWithoutParts = $moduleNumbers->diff($despieceNumbers)->values();
-        $partsWithoutModule = $despieceNumbers->diff($moduleNumbers)->values();
-
-        if ($modulesWithoutParts->count() > 0) {
-            $critical[] = 'Hay modulos sin despiece: ' . $modulesWithoutParts->implode(', ');
-        }
-
-        if ($partsWithoutModule->count() > 0) {
-            $critical[] = 'Hay despiece que no coincide con modulos XML: ' . $partsWithoutModule->implode(', ');
-        }
-
-        foreach ($despiece as $index => $row) {
-            $line = $index + 1;
-
-            if (empty($row['part'])) {
-                $critical[] = 'Linea despiece ' . $line . ': pieza vacia.';
-            }
-
-            if (empty($row['material_code']) || empty($row['material'])) {
-                $critical[] = 'Linea despiece ' . $line . ': material incompleto.';
-            }
-
-            if (empty($row['quantity']) || empty($row['length']) || empty($row['width']) || empty($row['thickness'])) {
-                $critical[] = 'Linea despiece ' . $line . ': medidas incompletas.';
-            }
-
-            if (($row['type_code'] == 1 || $row['type_code'] == 2) && empty($row['color_code'])) {
-                $warnings[] = 'Linea despiece ' . $line . ': color no separado.';
-            }
-        }
-
-        if ($checkDuplicates && $this->sceneAlreadyExists($data)) {
-            $critical[] = 'Esta escena parece ya importada anteriormente.';
-        }
-
-        return [
-            'critical' => $critical,
-            'warnings' => $warnings,
-            'critical_count' => count($critical),
-            'warning_count' => count($warnings),
-        ];
-    }
-
-    private function sceneAlreadyExists(array $data): bool
-    {
-        $header = $data['header'] ?? [];
-        $files = $data['files'] ?? [];
-
-        $estimateId = trim($header['estimate_id'] ?? '');
-        $projectName = trim($header['project_name'] ?? '');
-        $clientName = trim($header['client_name'] ?? '');
-        $xmlName = trim($files['xml'] ?? '');
-        $txtName = trim($files['txt'] ?? '');
-
-        $projects = Project::where('company_id', auth()->user()->company_id)->get();
-
-        foreach ($projects as $project) {
-            $saved = json_decode($project->scn_data, true);
-
-            if (!$saved) {
-                continue;
-            }
-
-            $savedHeader = $saved['header'] ?? [];
-            $savedFiles = $saved['files'] ?? [];
-
-            if ($estimateId !== '' && $estimateId === trim($savedHeader['estimate_id'] ?? '')) {
-                return true;
-            }
-
-            if ($xmlName !== '' && $txtName !== '' && $xmlName === trim($savedFiles['xml'] ?? '') && $txtName === trim($savedFiles['txt'] ?? '')) {
-                return true;
-            }
-
-            if ($projectName !== '' && $clientName !== ''
-                && $projectName === trim($savedHeader['project_name'] ?? '')
-                && $clientName === trim($savedHeader['client_name'] ?? '')) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private function parseKitchenDrawXml($file): array
     {
         $content = file_get_contents($file->getRealPath());
+
         $xml = simplexml_load_string($content);
 
         if (!$xml) {
@@ -335,6 +143,8 @@ class ProjectController extends Controller
         ];
 
         $headings = [];
+
+$allowedCatalogs = $this->allowedCatalogs;
         $modules = [];
 
         foreach ($xml->Headings->Heading ?? [] as $heading) {
@@ -357,9 +167,9 @@ class ProjectController extends Controller
                     'number' => $number,
                     'item_id' => (string) ($item->ItemId ?? ''),
                     'catalog_file' => (string) ($heading->CatalogFileName ?? ''),
-                    'catalog_code' => (string) ($heading->CatalogCode ?? ''),
-                    'catalog_name' => (string) ($heading->CatalogName ?? ''),
-                    'reference' => (string) ($item['Reference'] ?? ''),
+                'catalog_code' => (string) ($heading->CatalogCode ?? ''),
+                'catalog_name' => (string) ($heading->CatalogName ?? ''),
+                'reference' => (string) ($item['Reference'] ?? ''),
                     'description' => trim((string) ($item->Description ?? '')),
                     'quantity' => (float) ($item->Quantity ?? 0),
                     'pvp' => $this->getXmlSellPrice($item, 'Net', '1'),
@@ -390,6 +200,7 @@ class ProjectController extends Controller
     private function parseKitchenDrawTxt($file): array
     {
         $rows = [];
+
         $handle = fopen($file->getRealPath(), 'r');
 
         if (!$handle) {
@@ -454,37 +265,6 @@ class ProjectController extends Controller
             'color_code' => '',
             'color_description' => '',
         ];
-    }
-
-    private function syncMaterialPricesFromDespiece(array $despiece): void
-    {
-        $companyId = auth()->user()->company_id;
-
-        foreach ($despiece as $row) {
-            $materialCode = trim($row['material_code'] ?? '');
-            $materialName = trim($row['material'] ?? '');
-            $colorCode = trim($row['color_code'] ?? '');
-            $colorName = trim($row['color_description'] ?? '');
-
-            if ($materialCode === '' || $materialName === '') {
-                continue;
-            }
-
-            MaterialPrice::firstOrCreate(
-                [
-                    'company_id' => $companyId,
-                    'material_code' => $materialCode,
-                    'color_code' => $colorCode,
-                ],
-                [
-                    'material_name' => $materialName,
-                    'color_name' => $colorName,
-                    'unit_type' => 'm2',
-                    'unit_cost' => 0,
-                    'is_active' => true,
-                ]
-            );
-        }
     }
 
     private function getXmlSellPrice($node, string $type, string $withTax): ?string

@@ -262,7 +262,7 @@
     </div>
 
     <div class="ekd-actions">
-        <div class="ekd-actions-left">Verifica la informacion antes de guardar el proyecto.</div>
+        <div class="ekd-actions-left">Verifica que no existan observaciones antes de guardar la validacion tecnica.</div>
 
         <div class="ekd-actions-right">
             <a href="{{ route('projects.index') }}" class="ekd-btn ekd-btn-secondary">Volver</a>
@@ -276,7 +276,7 @@
                     'despiece' => $despiece,
                     'files' => $files,
                 ]) }}">
-                <button type="submit" class="ekd-btn ekd-btn-primary">Guardar Proyecto</button>
+                <button type="submit" class="ekd-btn ekd-btn-primary">Guardar validacion tecnica</button>
             </form>
         </div>
     </div>
