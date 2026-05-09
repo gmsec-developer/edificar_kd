@@ -73,6 +73,8 @@ Route::middleware(['auth', 'company.active'])->group(function () {
 });
 
 Route::post('projects/store-final', [\App\Http\Controllers\ProjectController::class, 'storeFinal'])->name('projects.storeFinal');
+Route::post('projects/{project}/replace-final', [\App\Http\Controllers\ProjectController::class, 'replaceFinal'])->name('projects.replaceFinal');
+
 
 require __DIR__.'/auth.php';
 
@@ -111,6 +113,10 @@ Route::middleware(['auth', 'company.active', 'permission:companies.toggle'])->gr
 });
 
 
+
+Route::resource('module-prices', \App\Http\Controllers\ModulePriceController::class)
+    ->only(['index', 'update'])
+    ->middleware(['auth', 'company.active']);
 Route::resource('material-prices', MaterialPriceController::class)
     ->only(['index', 'edit', 'update'])
     ->middleware(['auth', 'company.active']);

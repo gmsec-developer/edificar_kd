@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Project;
 use App\Models\MaterialPrice;
 use Illuminate\Http\Request;
+use App\Models\ModulePrice;
 
 class ProjectController extends Controller
 {
@@ -47,6 +48,8 @@ class ProjectController extends Controller
         $xmlData = $this->parseKitchenDrawXml($xmlFile);
         $despiece = $this->parseKitchenDrawTxt($txtFile);
 
+        $xmlData['modules'] = $this->expandModulesFromDespiece($xmlData['modules'] ?? [], $despiece);
+
         $this->syncMaterialPricesFromDespiece($despiece);
 
         $parsedData = [
@@ -83,24 +86,62 @@ class ProjectController extends Controller
 
         $validation = $this->validateParsedProject($data, true);
 
-        if (($validation['critical_count'] ?? 0) > 0) {
-            return back()->withErrors([
-                'validation' => 'No se puede guardar la validacion tecnica porque existen errores criticos pendientes.',
-            ]);
-        }
+        $hasCriticalErrors = (($validation['critical_count'] ?? 0) > 0);
 
         Project::create([
             'company_id' => auth()->user()->company_id,
             'user_id' => auth()->id(),
             'name' => $data['header']['project_name'] ?? 'Proyecto KitchenDraw',
-            'status' => 'technical_validated',
+            'status' => $hasCriticalErrors ? 'technical_observed' : 'technical_validated',
             'scn_data' => json_encode($data),
         ]);
 
+        $this->syncModulePricesFromModules($data['modules'] ?? []);
+
         return redirect()->route('projects.index')
-            ->with('success', 'Validacion tecnica guardada correctamente.');
+            ->with('success', $hasCriticalErrors ? 'Proyecto guardado en modo pruebas con observaciones tecnicas.' : 'Validacion tecnica guardada correctamente.');
     }
 
+    public function replaceFinal(Request $request, Project $project)
+    {
+        if ($project->company_id !== auth()->user()->company_id) {
+            abort(403);
+        }
+
+        $data = json_decode($request->input('data'), true);
+
+        if (!$data) {
+            return back()->withErrors(['data' => 'No se recibieron datos validos para reemplazar.']);
+        }
+
+        $currentData = json_decode($project->scn_data, true) ?: [];
+
+        $currentEstimateId = trim($currentData['header']['estimate_id'] ?? '');
+        $newEstimateId = trim($data['header']['estimate_id'] ?? '');
+
+        if ($currentEstimateId === '' || $newEstimateId === '' || $currentEstimateId !== $newEstimateId) {
+            return redirect()->route('projects.show', $project)
+                ->withErrors([
+                    'replace_scene' => 'No se puede reemplazar. La escena no corresponde al proyecto actual. ID actual: ' . ($currentEstimateId ?: 'N/D') . ' | ID nuevo: ' . ($newEstimateId ?: 'N/D'),
+                ]);
+        }
+
+        $validation = $this->validateParsedProject($data, false);
+        $hasCriticalErrors = (($validation['critical_count'] ?? 0) > 0);
+
+        $this->syncMaterialPricesFromDespiece($data['despiece'] ?? []);
+
+        $project->update([
+            'name' => $data['header']['project_name'] ?? $project->name,
+            'status' => $hasCriticalErrors ? 'technical_observed' : 'technical_validated',
+            'scn_data' => json_encode($data),
+        ]);
+
+        $this->syncModulePricesFromModules($data['modules'] ?? []);
+
+        return redirect()->route('projects.show', $project)
+            ->with('success', $hasCriticalErrors ? 'Escena reemplazada en modo pruebas con observaciones tecnicas.' : 'Escena reemplazada y validada correctamente.');
+    }
     public function show(Project $project)
     {
         if ($project->company_id !== auth()->user()->company_id) {
@@ -115,6 +156,22 @@ class ProjectController extends Controller
             ->keyBy(function ($item) {
                 return $item->material_code . '|' . $item->color_code;
             });
+
+
+        $modulePrices = ModulePrice::where('company_id', auth()->user()->company_id)
+        ->where('is_active', true)
+        ->get()
+        ->keyBy(function ($item) {
+            return implode('|', [
+                $item->catalog_code,
+                $item->reference,
+                (float) $item->dx,
+                (float) $item->dy,
+                (float) $item->dz,
+            ]);
+        });
+
+    $moduleSummaries = [];
 
         $costRows = [];
 
@@ -152,11 +209,126 @@ class ProjectController extends Controller
             ];
         }
 
+        $materialBaseCost = collect($costRows)
+            ->whereNotNull('total_cost')
+            ->sum('total_cost');
+
+        $missingCostRows = collect($costRows)
+            ->where('found', false)
+            ->count();
+
+        $wastePercent = 10;
+        $wasteCost = $materialBaseCost * ($wastePercent / 100);
+
+        $laborCost = 0;
+        $indirectCost = 0;
+        $profitPercent = 35;
+
+        $edificarCost = $materialBaseCost + $wasteCost + $laborCost + $indirectCost;
+        $pvpEdificar = $edificarCost / (1 - ($profitPercent / 100));
+
+        $pvpKd = (float) ($data['header']['total_with_tax'] ?? 0);
+        $difference = $pvpKd - $pvpEdificar;
+        $marginKd = $pvpKd > 0 ? (($pvpKd - $edificarCost) / $pvpKd) * 100 : 0;
+
+        $modulesByNumber = collect($data['modules'] ?? [])->keyBy(function ($module) {
+            return (int) ($module['number'] ?? 0);
+        });
+
+        $costRowsByModule = collect($costRows)->groupBy(function ($row) {
+            return (int) ($row['module_number'] ?? 0);
+        });
+
+        foreach ($modulesByNumber as $moduleNumber => $module) {
+            $rows = $costRowsByModule->get($moduleNumber, collect());
+
+            $moduleKey = implode('|', [
+                $module['catalog_code'] ?? '',
+                $module['reference'] ?? '',
+                (float) ($module['dx'] ?? 0),
+                (float) ($module['dy'] ?? 0),
+                (float) ($module['dz'] ?? 0),
+            ]);
+
+            $moduleMaster = $modulePrices[$moduleKey] ?? null;
+
+            $moduleMaterialCost = $rows
+                ->whereNotNull('total_cost')
+                ->sum('total_cost');
+
+            $moduleMissingCostRows = $rows
+                ->where('found', false)
+                ->count();
+
+            $moduleWastePercent = $moduleMaster ? (float) $moduleMaster->default_waste_percent : $wastePercent;
+            $moduleWasteCost = $moduleMaterialCost * ($moduleWastePercent / 100);
+
+            $moduleLaborCost = $moduleMaster ? (float) $moduleMaster->labor_cost : 0;
+            $moduleIndirectCost = $moduleMaster ? (float) $moduleMaster->indirect_cost : 0;
+            $moduleComplexityFactor = $moduleMaster ? (float) $moduleMaster->complexity_factor : 1.00;
+
+            $moduleBaseCost = $moduleMaterialCost + $moduleWasteCost + $moduleLaborCost + $moduleIndirectCost;
+            $moduleEdificarCost = $moduleBaseCost * $moduleComplexityFactor;
+
+            $modulePvpEdificar = $moduleEdificarCost > 0
+                ? $moduleEdificarCost / (1 - ($profitPercent / 100))
+                : 0;
+
+            $modulePvpKd = (float) ($module['total'] ?? 0);
+            $moduleDifference = $modulePvpKd - $modulePvpEdificar;
+
+            $moduleMarginKd = $modulePvpKd > 0
+                ? (($modulePvpKd - $moduleEdificarCost) / $modulePvpKd) * 100
+                : 0;
+
+            $moduleSummaries[] = [
+                'module_number' => $moduleNumber,
+                'reference' => $module['reference'] ?? '',
+                'description' => $module['description'] ?? '',
+                'catalog_code' => $module['catalog_code'] ?? '',
+                'catalog_name' => $module['catalog_name'] ?? '',
+                'dx' => $module['dx'] ?? '',
+                'dy' => $module['dy'] ?? '',
+                'dz' => $module['dz'] ?? '',
+                'pvp_kd' => $modulePvpKd,
+                'material_cost' => $moduleMaterialCost,
+                'waste_percent' => $moduleWastePercent,
+                'waste_cost' => $moduleWasteCost,
+                'labor_cost' => $moduleLaborCost,
+                'indirect_cost' => $moduleIndirectCost,
+                'complexity_factor' => $moduleComplexityFactor,
+                'edificar_cost' => $moduleEdificarCost,
+                'pvp_edificar' => $modulePvpEdificar,
+                'difference' => $moduleDifference,
+                'margin_kd' => $moduleMarginKd,
+                'missing_cost_rows' => $moduleMissingCostRows,
+                'despiece_rows' => $rows->count(),
+                'configured' => $moduleMaster ? true : false,
+            ];
+        }
+
+
+
         return view('projects.show', [
             'project' => $project,
             'data' => $data,
             'total' => 0,
             'costRows' => $costRows,
+            'moduleSummaries' => $moduleSummaries,
+            'commercialSummary' => [
+                'material_base_cost' => $materialBaseCost,
+                'missing_cost_rows' => $missingCostRows,
+                'waste_percent' => $wastePercent,
+                'waste_cost' => $wasteCost,
+                'labor_cost' => $laborCost,
+                'indirect_cost' => $indirectCost,
+                'profit_percent' => $profitPercent,
+                'edificar_cost' => $edificarCost,
+                'pvp_edificar' => $pvpEdificar,
+                'pvp_kd' => $pvpKd,
+                'difference' => $difference,
+                'margin_kd' => $marginKd,
+            ],
         ]);
     }
 
@@ -167,9 +339,63 @@ class ProjectController extends Controller
 
     public function update(Request $request, Project $project)
     {
-        //
-    }
+        if ($project->company_id !== auth()->user()->company_id) {
+            abort(403);
+        }
 
+        $request->validate([
+            'xml_file' => 'required|file',
+            'txt_file' => 'required|file',
+            'scn_file' => 'nullable|file',
+        ]);
+
+        $this->validateFileExtensions($request);
+
+        $xmlFile = $request->file('xml_file');
+        $txtFile = $request->file('txt_file');
+        $scnFile = $request->file('scn_file');
+
+        $xmlData = $this->parseKitchenDrawXml($xmlFile);
+        $despiece = $this->parseKitchenDrawTxt($txtFile);
+
+        $xmlData['modules'] = $this->expandModulesFromDespiece($xmlData['modules'] ?? [], $despiece);
+
+        $parsedData = [
+            'header' => $xmlData['header'],
+            'headings' => $xmlData['headings'],
+            'modules' => $xmlData['modules'],
+            'despiece' => $despiece,
+            'files' => [
+                'xml' => $xmlFile->getClientOriginalName(),
+                'txt' => $txtFile->getClientOriginalName(),
+                'scn' => $scnFile ? $scnFile->getClientOriginalName() : null,
+            ],
+        ];
+
+        $currentData = json_decode($project->scn_data, true) ?: [];
+
+        $currentEstimateId = trim($currentData['header']['estimate_id'] ?? '');
+        $newEstimateId = trim($parsedData['header']['estimate_id'] ?? '');
+
+        if ($currentEstimateId === '' || $newEstimateId === '' || $currentEstimateId !== $newEstimateId) {
+            return redirect()->route('projects.show', $project)
+                ->withErrors([
+                    'replace_scene' => 'La escena cargada no corresponde al proyecto actual. ID actual: ' . ($currentEstimateId ?: 'N/D') . ' | ID nuevo: ' . ($newEstimateId ?: 'N/D'),
+                ]);
+        }
+
+        $validation = $this->validateParsedProject($parsedData, false);
+
+        return view('projects.preview', [
+            'header' => $parsedData['header'],
+            'headings' => $parsedData['headings'],
+            'modules' => $parsedData['modules'],
+            'despiece' => $parsedData['despiece'],
+            'files' => $parsedData['files'],
+            'validation' => $validation,
+            'replaceProject' => $project,
+        ]);
+    }
     public function destroy(Project $project)
     {
         //
@@ -243,11 +469,15 @@ class ProjectController extends Controller
             }
 
             if (empty($row['material_code']) || empty($row['material'])) {
-                $critical[] = 'Linea despiece ' . $line . ': material incompleto.';
+                $warnings[] = 'Linea despiece ' . $line . ': material incompleto.';
             }
 
-            if (empty($row['quantity']) || empty($row['length']) || empty($row['width']) || empty($row['thickness'])) {
-                $critical[] = 'Linea despiece ' . $line . ': medidas incompletas.';
+            if (empty($row['quantity']) || empty($row['length']) || empty($row['width'])) {
+                $critical[] = 'Linea despiece ' . $line . ': medidas principales incompletas.';
+            }
+
+            if (empty($row['thickness'])) {
+                $warnings[] = 'Linea despiece ' . $line . ': espesor no definido.';
             }
 
             if (($row['type_code'] == 1 || $row['type_code'] == 2) && empty($row['color_code'])) {
@@ -361,6 +591,8 @@ class ProjectController extends Controller
                     'catalog_name' => (string) ($heading->CatalogName ?? ''),
                     'reference' => (string) ($item['Reference'] ?? ''),
                     'description' => trim((string) ($item->Description ?? '')),
+                    'alternate_code' => trim((string) ($item->UserRef ?? '')),
+                    'manufacturing_note' => trim((string) ($item->ModifiedDescription ?? '')),
                     'quantity' => (float) ($item->Quantity ?? 0),
                     'pvp' => $this->getXmlSellPrice($item, 'Net', '1'),
                     'total' => $this->getXmlSellPrice($item, 'NetTotal', '1'),
@@ -456,6 +688,116 @@ class ProjectController extends Controller
         ];
     }
 
+    private function expandModulesFromDespiece(array $modules, array $despiece): array
+    {
+        $expanded = [];
+        $usedNumbers = [];
+
+        $despieceByReference = collect($despiece)
+            ->filter(function ($row) {
+                return isset($row['module_number']) && (int) $row['module_number'] > 0;
+            })
+            ->groupBy(function ($row) {
+                return trim($row['module_reference'] ?? '');
+            })
+            ->map(function ($rows) {
+                return $rows
+                    ->pluck('module_number')
+                    ->map(fn($number) => (int) $number)
+                    ->unique()
+                    ->sort()
+                    ->values()
+                    ->all();
+            });
+
+        foreach ($modules as $module) {
+            $quantity = (float) ($module['quantity'] ?? 1);
+            $reference = trim($module['reference'] ?? '');
+            $originalNumber = (int) ($module['number'] ?? 0);
+
+            if ($quantity <= 1 || $reference === '') {
+                $expanded[] = $module;
+                $usedNumbers[] = $originalNumber;
+                continue;
+            }
+
+            $candidateNumbers = $despieceByReference->get($reference, []);
+
+            $candidateNumbers = collect($candidateNumbers)
+                ->filter(function ($number) use ($usedNumbers, $originalNumber) {
+                    return !in_array((int) $number, $usedNumbers, true) && (int) $number >= $originalNumber;
+                })
+                ->values()
+                ->all();
+
+            if (count($candidateNumbers) < (int) $quantity) {
+                $expanded[] = $module;
+                $usedNumbers[] = $originalNumber;
+                continue;
+            }
+
+            $numbersToUse = array_slice($candidateNumbers, 0, (int) $quantity);
+
+            foreach ($numbersToUse as $number) {
+                $copy = $module;
+                $copy['number'] = (int) $number;
+                $copy['quantity'] = 1;
+                $copy['total'] = $module['pvp'] ?? $module['total'] ?? 0;
+                $copy['grouped_quantity'] = $quantity;
+                $copy['grouped_from_number'] = $originalNumber;
+
+                $expanded[] = $copy;
+                $usedNumbers[] = (int) $number;
+            }
+        }
+
+        usort($expanded, fn($a, $b) => ((int) ($a['number'] ?? 0)) <=> ((int) ($b['number'] ?? 0)));
+
+        return $expanded;
+    }
+
+    private function syncModulePricesFromModules(array $modules): void
+    {
+        $companyId = auth()->user()->company_id;
+
+        foreach ($modules as $module) {
+            $catalogCode = trim($module['catalog_code'] ?? '');
+            $catalogName = trim($module['catalog_name'] ?? '');
+            $reference = trim($module['reference'] ?? '');
+
+            $dx = (float) ($module['dx'] ?? 0);
+            $dy = (float) ($module['dy'] ?? 0);
+            $dz = (float) ($module['dz'] ?? 0);
+
+            if ($catalogCode === '' || $reference === '') {
+                continue;
+            }
+
+            ModulePrice::firstOrCreate(
+                [
+                    'company_id' => $companyId,
+                    'catalog_code' => $catalogCode,
+                    'reference' => $reference,
+                    'dx' => $dx,
+                    'dy' => $dy,
+                    'dz' => $dz,
+                ],
+                [
+                    'catalog_name' => $catalogName,
+                    'description_base' => trim($module['description'] ?? ''),
+                    'model' => trim($module['model'] ?? ''),
+                    'complexity_level' => 'simple',
+                    'complexity_factor' => 1.00,
+                    'labor_cost' => 0,
+                    'indirect_cost' => 0,
+                    'default_waste_percent' => 10,
+                    'is_active' => true,
+                ]
+            );
+        }
+    }
+
+
     private function syncMaterialPricesFromDespiece(array $despiece): void
     {
         $companyId = auth()->user()->company_id;
@@ -508,3 +850,4 @@ class ProjectController extends Controller
         };
     }
 }
+

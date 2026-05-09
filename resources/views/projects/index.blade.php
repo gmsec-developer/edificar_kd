@@ -17,9 +17,39 @@
     .kd-table th { background: #eef2f7; padding: 8px; border-bottom: 1px solid #d9dee7; text-align: left; }
     .kd-table td { padding: 8px; border-bottom: 1px solid #edf0f5; }
     .kd-table tr:hover { background: #f8fafc; }
+
+    .kd-status {
+        display:inline-block;
+        padding:4px 10px;
+        border-radius:999px;
+        font-size:12px;
+        font-weight:700;
+    }
+
+    .kd-status-success {
+        background:#dcfce7;
+        color:#166534;
+    }
+
+    .kd-status-warning {
+        background:#fef3c7;
+        color:#92400e;
+    }
+
+    .kd-alert-success { background:#ecfdf5; border:1px solid #86efac; color:#166534; padding:12px 42px 12px 12px; border-radius:8px; margin-bottom:14px; font-weight:700; position:relative; transition:opacity .4s ease; }
+    .kd-alert-close { position:absolute; right:12px; top:8px; border:0; background:transparent; color:#166534; font-size:18px; font-weight:800; cursor:pointer; }
+
 </style>
 
 <div class="kd-page">
+
+    @if(session('success'))
+        <div class="kd-alert-success" id="kdSuccessAlert">
+            {{ session('success') }}
+            <button type="button" class="kd-alert-close" onclick="document.getElementById('kdSuccessAlert').style.display='none'">x</button>
+        </div>
+    @endif
+
 
     <div class="kd-card">
         <div class="kd-title">Cargar proyecto KitchenDraw</div>
@@ -88,7 +118,15 @@
 <td>
     {{ $project->designer ?? '-' }}
 </td>
-                        <td>{{ $project->status }}</td>
+                        <td>
+    @if($project->status === 'technical_validated')
+        <span class="kd-status kd-status-success">Validado</span>
+    @elseif($project->status === 'technical_observed')
+        <span class="kd-status kd-status-warning">En revision</span>
+    @else
+        <span class="kd-status">{{ $project->status }}</span>
+    @endif
+</td>
                         <td>{{ $project->created_at }}</td>
                         <td>
                             <a href="{{ route('projects.show', $project) }}" class="btn btn-sm btn-outline-primary">Ver</a>
@@ -104,4 +142,20 @@
     </div>
 
 </div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        var alertBox = document.getElementById('kdSuccessAlert');
+
+        if (alertBox) {
+            setTimeout(function () {
+                alertBox.style.opacity = '0';
+
+                setTimeout(function () {
+                    alertBox.style.display = 'none';
+                }, 400);
+            }, 5000);
+        }
+    });
+</script>
 @endsection

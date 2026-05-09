@@ -51,6 +51,31 @@
     .ekd-btn-primary:hover { background:#15803d; color:#fff; }
     .ekd-btn-secondary { background:#f8fafc; color:#334155; border:1px solid #cbd5e1; }
     .ekd-btn-secondary:hover { background:#e2e8f0; color:#334155; }
+
+    .ekd-special-alt {
+        display:inline-block;
+        background:#e0f2fe;
+        color:#075985;
+        border:1px solid #7dd3fc;
+        border-radius:999px;
+        padding:3px 8px;
+        font-size:11px;
+        font-weight:800;
+        white-space:nowrap;
+    }
+
+    .ekd-special-note {
+        display:inline-block;
+        background:#fef3c7;
+        color:#92400e;
+        border:1px solid #fbbf24;
+        border-radius:8px;
+        padding:4px 8px;
+        font-size:11px;
+        font-weight:800;
+        max-width:220px;
+        white-space:normal;
+    }
 </style>
 
 @php
@@ -64,7 +89,7 @@
     $missingColor = collect($despiece)->filter(fn($r) => empty($r['color_code']) && ($r['type_code'] == 1 || $r['type_code'] == 2))->count();
     $badMeasures = collect($despiece)->filter(fn($r) => empty($r['length']) || empty($r['width']) || empty($r['thickness']) || empty($r['quantity']))->count();
 
-    $modulesWithParts = collect($despiece)->pluck('module_number')->unique();
+    $modulesWithParts = collect($despiece)->pluck('module_number');
     $modulesWithoutParts = collect($modules)->filter(fn($m) => !$modulesWithParts->contains($m['number']))->count();
 
     $validationErrors = $missingMaterial + $badMeasures + $modulesWithoutParts;
@@ -114,23 +139,57 @@
                 <div class="ekd-summary-item">
                     <div class="ekd-label">Estado de validacion</div>
                     <div class="ekd-value">
-                        @if($validationErrors > 0)
-                            <span class="status-error">{{ $validationErrors }} errores</span>
-                        @elseif($validationWarnings > 0)
-                            <span class="status-warning">{{ $validationWarnings }} alertas</span>
+                        @if(($validation['critical_count'] ?? 0) > 0)
+                            <span class="status-error">{{ $validation['critical_count'] }} observaciones criticas</span>
+                        @elseif(($validation['warning_count'] ?? 0) > 0)
+                            <span class="status-warning">{{ $validation['warning_count'] }} advertencias</span>
                         @else
-                            <span class="status-ok">Sin observaciones</span>
+                            <span class="status-ok">Validado</span>
                         @endif
                     </div>
                 </div>
             </div>
 
-            <div class="mt-3">
+            @if(($validation['critical_count'] ?? 0) > 0 || ($validation['warning_count'] ?? 0) > 0)
+                <div style="margin-top:14px; display:grid; gap:10px;">
+
+                    @if(($validation['critical_count'] ?? 0) > 0)
+                        <div style="border:1px solid #f5c2c7; background:#fff5f5; border-radius:8px; padding:10px 12px;">
+                            <div style="font-weight:700; color:#b42318; margin-bottom:6px;">
+                                Observaciones criticas
+                            </div>
+
+                            <ul style="margin:0; padding-left:18px; color:#7a271a;">
+                                @foreach(($validation['critical'] ?? []) as $item)
+                                    <li>{{ $item }}</li>
+                                @endforeach
+                            </ul>
+                        </div>
+                    @endif
+
+                    @if(($validation['warning_count'] ?? 0) > 0)
+                        <div style="border:1px solid #fde68a; background:#fffbeb; border-radius:8px; padding:10px 12px;">
+                            <div style="font-weight:700; color:#92400e; margin-bottom:6px;">
+                                Advertencias
+                            </div>
+
+                            <ul style="margin:0; padding-left:18px; color:#78350f;">
+                                @foreach(($validation['warnings'] ?? []) as $item)
+                                    <li>{{ $item }}</li>
+                                @endforeach
+                            </ul>
+                        </div>
+                    @endif
+
+                </div>
+            @endif
+
+            {{--<div class="mt-3">
                 @if($modulesWithoutParts > 0)<div class="alert alert-danger py-2 mb-2">Hay {{ $modulesWithoutParts }} modulo(s) sin despiece detectado.</div>@endif
                 @if($badMeasures > 0)<div class="alert alert-danger py-2 mb-2">Hay {{ $badMeasures }} fila(s) con cantidad, largo, ancho o espesor incompleto.</div>@endif
                 @if($missingMaterial > 0)<div class="alert alert-danger py-2 mb-2">Hay {{ $missingMaterial }} fila(s) sin codigo o descripcion de material.</div>@endif
                 @if($missingColor > 0)<div class="alert alert-warning py-2 mb-2">Hay {{ $missingColor }} fila(s) sin color separado.</div>@endif
-            </div>
+            </div>--}}
         </div>
     </div>
 
@@ -159,6 +218,8 @@
                                     <th onclick="sortTable('modulesTable', 0)">No</th>
                                     <th onclick="sortTable('modulesTable', 1)">Referencia</th>
                                     <th onclick="sortTable('modulesTable', 2)">Descripcion / modulo</th>
+                                    <th>Cod. alterno</th>
+                                    <th>Nota fabricacion</th>
                                     <th onclick="sortTable('modulesTable', 3)">Ancho</th>
                                     <th onclick="sortTable('modulesTable', 4)">Alto</th>
                                     <th onclick="sortTable('modulesTable', 5)">Profundidad</th>
@@ -174,6 +235,20 @@
                                         <td class="ekd-num">{{ $module['number'] }}</td>
                                         <td><strong>{{ $module['reference'] }}</strong></td>
                                         <td class="ekd-text">{{ $module['description'] }}</td>
+                                        <td>
+                                            @if(!empty($module['alternate_code']))
+                                                <span class="ekd-special-alt">{{ $module['alternate_code'] }}</span>
+                                            @else
+                                                -
+                                            @endif
+                                        </td>
+                                        <td>
+                                            @if(!empty($module['manufacturing_note']))
+                                                <span class="ekd-special-note">{{ $module['manufacturing_note'] }}</span>
+                                            @else
+                                                -
+                                            @endif
+                                        </td>
                                         <td class="ekd-num">{{ $module['dx'] }}</td>
                                         <td class="ekd-num">{{ $module['dz'] }}</td>
                                         <td class="ekd-num">{{ $module['dy'] }}</td>
@@ -267,8 +342,13 @@
         <div class="ekd-actions-right">
             <a href="{{ route('projects.index') }}" class="ekd-btn ekd-btn-secondary">Volver</a>
 
-            <form action="{{ route('projects.storeFinal') }}" method="POST" class="mb-0">
+            @php
+                $isReplacementPreview = isset($replaceProject);
+            @endphp
+
+            <form action="{{ $isReplacementPreview ? route('projects.replaceFinal', $replaceProject) : route('projects.storeFinal') }}" method="POST" class="mb-0">
                 @csrf
+
                 <input type="hidden" name="data" value="{{ json_encode([
                     'header' => $header,
                     'headings' => $headings,
@@ -276,8 +356,27 @@
                     'despiece' => $despiece,
                     'files' => $files,
                 ]) }}">
-                <button type="submit" class="ekd-btn ekd-btn-primary">Guardar validacion tecnica</button>
+
+               <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
+                    <button
+                        type="submit"
+                        class="ekd-btn ekd-btn-primary"
+    
+                    >
+                        {{ $isReplacementPreview ? 'Confirmar reemplazo de escena' : 'Guardar validacion tecnica' }}
+                    </button>
+
+                    @if(($validation['critical_count'] ?? 0) > 0)
+                        <div style="font-size:12px; color:#b42318; font-weight:600; text-align:right;">
+                            {{ $isReplacementPreview ? 'Esta accion reemplazara la escena actual del proyecto despues de confirmar.' : 'Modo pruebas: se permitira guardar con observaciones criticas.' }}
+                        </div>
+                    @endif
+                </div>
             </form>
+
+
+
+
         </div>
     </div>
 

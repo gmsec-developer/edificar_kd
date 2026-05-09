@@ -34,3 +34,4 @@ uso github.txt
 # Carpetas de entorno
 /storage/app/public/*
 /storage/logs/*
+backups/

@@ -29,6 +29,63 @@
     .status-ok { color:#15803d; font-weight:700; }
     .status-warning { color:#b45309; font-weight:700; }
     .row-warning { background:#fff7ed !important; }
+    .ekd-flash {
+        position:relative;
+        padding:12px 42px 12px 12px;
+        border-radius:8px;
+        margin:12px 0;
+        font-weight:700;
+        transition:opacity .4s ease;
+    }
+
+    .ekd-flash-success {
+        background:#ecfdf5;
+        border:1px solid #86efac;
+        color:#166534;
+    }
+
+    .ekd-flash-error {
+        background:#fef2f2;
+        border:1px solid #fca5a5;
+        color:#991b1b;
+    }
+
+    .ekd-flash-close {
+        position:absolute;
+        right:12px;
+        top:8px;
+        border:0;
+        background:transparent;
+        color:inherit;
+        font-size:18px;
+        font-weight:800;
+        cursor:pointer;
+    }
+
+.ekd-special-alt {
+    display:inline-block;
+    background:#e0f2fe;
+    color:#075985;
+    border:1px solid #7dd3fc;
+    border-radius:999px;
+    padding:3px 8px;
+    font-size:11px;
+    font-weight:800;
+    white-space:nowrap;
+}
+
+.ekd-special-note {
+    display:inline-block;
+    background:#fef3c7;
+    color:#92400e;
+    border:1px solid #fbbf24;
+    border-radius:8px;
+    padding:4px 8px;
+    font-size:11px;
+    font-weight:800;
+    max-width:220px;
+    white-space:normal;
+}
 </style>
 
 @php
@@ -80,10 +137,30 @@
 
 <div class="ekd-page">
 
+@if(session('success'))
+    <div class="ekd-flash ekd-flash-success" id="ekdFlashMessage">
+        {{ session('success') }}
+        <button type="button" class="ekd-flash-close" onclick="document.getElementById('ekdFlashMessage').style.display='none'">x</button>
+    </div>
+@endif
+
+@if($errors->any())
+    <div class="ekd-flash ekd-flash-error" id="ekdFlashError">
+        {{ $errors->first() }}
+        <button type="button" class="ekd-flash-close" onclick="document.getElementById('ekdFlashError').style.display='none'">x</button>
+    </div>
+@endif
+
+
     <div class="ekd-card">
         <div class="ekd-card-header">
             <div>Proyecto guardado #{{ $project->id }}</div>
-            <a href="{{ route('projects.index') }}" class="btn btn-outline-secondary btn-sm">Volver</a>
+            <div style="display:flex; gap:8px; align-items:center;">
+    <a href="{{ route('projects.index') }}" class="btn btn-outline-secondary btn-sm">Volver</a>
+    <button type="button" class="btn btn-warning btn-sm" onclick="document.getElementById('replaceSceneBox').style.display = document.getElementById('replaceSceneBox').style.display === 'none' ? 'block' : 'none';">
+        Reemplazar escena
+    </button>
+</div>
         </div>
         <div class="ekd-card-body">
             <div class="ekd-summary-grid">
@@ -102,7 +179,45 @@
 
     <div class="ekd-card">
         <div class="ekd-card-body">
-            <div class="ekd-tabs">
+            
+<div id="replaceSceneBox" class="ekd-card" style="display:none; margin-top:12px;">
+    <div class="ekd-card-header">Reemplazar escena KitchenDraw</div>
+    <div class="ekd-card-body">
+        <form action="{{ route('projects.update', $project) }}" method="POST" enctype="multipart/form-data">
+            @csrf
+            @method('PUT')
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr auto; gap:10px; align-items:end;">
+                <div>
+                    <label class="ekd-label">Nuevo XML</label>
+                    <input type="file" name="xml_file" class="form-control form-control-sm" required>
+                </div>
+
+                <div>
+                    <label class="ekd-label">Nuevo TXT</label>
+                    <input type="file" name="txt_file" class="form-control form-control-sm" required>
+                </div>
+
+                <div>
+                    <label class="ekd-label">Nuevo SCN</label>
+                    <input type="file" name="scn_file" class="form-control form-control-sm">
+                </div>
+
+                <div>
+                    <button type="submit" class="btn btn-warning btn-sm">
+                        Reemplazar
+                    </button>
+                </div>
+            </div>
+
+            <div style="font-size:12px; color:#64748b; margin-top:8px;">
+                Esta accion reemplazara los datos tecnicos del proyecto y recalculara la informacion desde los nuevos archivos.
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="ekd-tabs">
                 <button type="button" class="ekd-tab active" onclick="showEkdTab('resumenTab', this)">Resumen</button>
                 <button type="button" class="ekd-tab" onclick="showEkdTab('modulosTab', this)">Detalle validado</button>
                 <button type="button" class="ekd-tab" onclick="showEkdTab('despieceTab', this)">Despiece</button>
@@ -131,7 +246,7 @@
                         <table class="ekd-table">
                             <thead>
                                 <tr>
-                                    <th>No</th><th>Referencia</th><th>Descripcion</th><th>Ancho</th><th>Alto</th><th>Profundidad</th><th>Cantidad</th><th>P.V. IVA</th><th>Total IVA</th>
+                                    <th>No</th><th>Referencia</th><th>Descripcion</th><th>Cod. alterno</th><th>Nota fabricacion</th><th>Ancho</th><th>Alto</th><th>Profundidad</th><th>Cantidad</th><th>P.V. IVA</th><th>Total IVA</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -140,6 +255,23 @@
                                         <td class="ekd-num">{{ $module['number'] }}</td>
                                         <td><strong>{{ $module['reference'] }}</strong></td>
                                         <td class="ekd-text">{{ $module['description'] }}</td>
+
+                                        <td>
+                                            @if(!empty($module['alternate_code']))
+                                                <span class="ekd-special-alt">{{ $module['alternate_code'] }}</span>
+                                            @else
+                                                -
+                                            @endif
+                                        </td>
+
+                                        <td>
+                                            @if(!empty($module['manufacturing_note']))
+                                                <span class="ekd-special-note">{{ $module['manufacturing_note'] }}</span>
+                                            @else
+                                                -
+                                            @endif
+                                        </td>
+
                                         <td class="ekd-num">{{ $module['dx'] }}</td>
                                         <td class="ekd-num">{{ $module['dz'] }}</td>
                                         <td class="ekd-num">{{ $module['dy'] }}</td>
@@ -296,22 +428,146 @@
                 <div class="ekd-card mb-0">
                     <div class="ekd-card-header">Comparacion PVP KitchenDraw vs Edificar</div>
                     <div class="ekd-card-body">
+
                         <div class="ekd-summary-grid">
-                            <div class="ekd-summary-item"><div class="ekd-label">PVP KitchenDraw</div><div class="ekd-value">{{ number_format($pvpKitchen, 2) }}</div></div>
-                            <div class="ekd-summary-item"><div class="ekd-label">Costo real estimado</div><div class="ekd-value">{{ number_format($totalEstimatedCost, 2) }}</div></div>
-                            <div class="ekd-summary-item"><div class="ekd-label">Margen bruto</div><div class="ekd-value">{{ number_format($grossMargin, 2) }}</div></div>
-                            <div class="ekd-summary-item"><div class="ekd-label">Margen %</div><div class="ekd-value">{{ number_format($grossMarginPercent, 2) }}%</div></div>
+
+                            <div class="ekd-summary-item">
+                                <div class="ekd-label">PVP KitchenDraw</div>
+                                <div class="ekd-value">
+                                    {{ number_format($commercialSummary['pvp_kd'], 2) }}
+                                </div>
+                            </div>
+
+                            <div class="ekd-summary-item">
+                                <div class="ekd-label">Costo materiales</div>
+                                <div class="ekd-value">
+                                    {{ number_format($commercialSummary['material_base_cost'], 2) }}
+                                </div>
+                            </div>
+
+                            <div class="ekd-summary-item">
+                                <div class="ekd-label">Desperdicio {{ $commercialSummary['waste_percent'] }}%</div>
+                                <div class="ekd-value">
+                                    {{ number_format($commercialSummary['waste_cost'], 2) }}
+                                </div>
+                            </div>
+
+                            <div class="ekd-summary-item">
+                                <div class="ekd-label">Costo EDIFICAR</div>
+                                <div class="ekd-value">
+                                    {{ number_format($commercialSummary['edificar_cost'], 2) }}
+                                </div>
+                            </div>
+
+                            <div class="ekd-summary-item">
+                                <div class="ekd-label">Utilidad aplicada {{ $commercialSummary['profit_percent'] }}%</div>
+                                <div class="ekd-value">
+                                    {{ number_format($commercialSummary['pvp_edificar'] - $commercialSummary['edificar_cost'], 2) }}
+                                </div>
+                            </div>
+
+                            <div class="ekd-summary-item">
+                                <div class="ekd-label">PVP EDIFICAR</div>
+                                <div class="ekd-value">
+                                    {{ number_format($commercialSummary['pvp_edificar'], 2) }}
+                                </div>
+                            </div>
+
+                            <div class="ekd-summary-item">
+                                <div class="ekd-label">Diferencia KD vs EDIFICAR</div>
+                                <div class="ekd-value">
+                                    {{ number_format($commercialSummary['difference'], 2) }}
+                                </div>
+                            </div>
+
+                            <div class="ekd-summary-item">
+                                <div class="ekd-label">Margen KD estimado</div>
+                                <div class="ekd-value">
+                                    {{ number_format($commercialSummary['margin_kd'], 2) }}%
+                                </div>
+                            </div>
+
                         </div>
 
                         <div class="mt-3">
-                            @if($missingPrices > 0)
-                                <div class="alert alert-warning mb-0">La comparacion no es definitiva porque existen materiales sin precio interno.</div>
+
+                            @if($commercialSummary['missing_cost_rows'] > 0)
+                                <div class="alert alert-warning mb-0">
+                                    Existen {{ $commercialSummary['missing_cost_rows'] }} fila(s) sin costo interno configurado. El calculo es parcial.
+                                </div>
                             @else
-                                <div class="alert alert-success mb-0">Comparacion calculada con todos los materiales costeados.</div>
+                                <div class="alert alert-success mb-0">
+                                    Comparacion calculada con todos los materiales costeados.
+                                </div>
                             @endif
+
                         </div>
+
                     </div>
                 </div>
+
+                <div class="ekd-card mt-3 mb-0">
+                    <div class="ekd-card-header">Comparacion por modulo</div>
+
+                    <div class="ekd-table-wrap">
+                        <table class="ekd-table">
+                            <thead>
+                                <tr>
+                                    <th>No</th>
+                                    <th>Modulo</th>
+                                    <th>Catalogo</th>
+                                    <th>Medidas</th>
+                                    <th>PVP KD</th>
+                                    <th>Materiales</th>
+                                    <th>Desperdicio</th>
+                                    <th>MO</th>
+                                    <th>Indirectos</th>
+                                    <th>Factor</th>
+                                    <th>Costo EDIFICAR</th>
+                                    <th>PVP EDIFICAR</th>
+                                    <th>Diferencia</th>
+                                    <th>Margen KD</th>
+                                    <th>Estado</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach(($moduleSummaries ?? []) as $module)
+                                    <tr class="{{ ($module['missing_cost_rows'] > 0 || !$module['configured']) ? 'row-warning' : '' }}">
+                                        <td class="ekd-num">{{ $module['module_number'] }}</td>
+                                        <td>
+                                            <strong>{{ $module['reference'] }}</strong>
+                                            <div style="font-size:11px; color:#6b7280;">
+                                                {{ Str::limit($module['description'], 55) }}
+                                            </div>
+                                        </td>
+                                        <td>{{ $module['catalog_code'] }}</td>
+                                        <td class="ekd-num">{{ $module['dx'] }} x {{ $module['dy'] }} x {{ $module['dz'] }}</td>
+                                        <td class="ekd-num">{{ number_format($module['pvp_kd'], 2) }}</td>
+                                        <td class="ekd-num">{{ number_format($module['material_cost'], 2) }}</td>
+                                        <td class="ekd-num">{{ number_format($module['waste_cost'], 2) }}</td>
+                                        <td class="ekd-num">{{ number_format($module['labor_cost'], 2) }}</td>
+                                        <td class="ekd-num">{{ number_format($module['indirect_cost'], 2) }}</td>
+                                        <td class="ekd-num">{{ number_format($module['complexity_factor'], 2) }}</td>
+                                        <td class="ekd-num"><strong>{{ number_format($module['edificar_cost'], 2) }}</strong></td>
+                                        <td class="ekd-num"><strong>{{ number_format($module['pvp_edificar'], 2) }}</strong></td>
+                                        <td class="ekd-num">{{ number_format($module['difference'], 2) }}</td>
+                                        <td class="ekd-num">{{ number_format($module['margin_kd'], 2) }}%</td>
+                                        <td>
+                                            @if($module['missing_cost_rows'] > 0)
+                                                <span class="status-warning">Costo parcial</span>
+                                            @elseif(!$module['configured'])
+                                                <span class="status-warning">No configurado</span>
+                                            @else
+                                                <span class="status-ok">OK</span>
+                                            @endif
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
             </div>
 
         </div>
@@ -326,5 +582,23 @@
         document.getElementById(panelId).classList.add('active');
         button.classList.add('active');
     }
+</script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        ['ekdFlashMessage', 'ekdFlashError'].forEach(function (id) {
+            var box = document.getElementById(id);
+
+            if (box) {
+                setTimeout(function () {
+                    box.style.opacity = '0';
+
+                    setTimeout(function () {
+                        box.style.display = 'none';
+                    }, 400);
+                }, 5000);
+            }
+        });
+    });
 </script>
 @endsection
