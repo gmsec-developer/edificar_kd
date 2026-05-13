@@ -10,9 +10,7 @@ class ModulePrice extends Model
         'company_id',
         'catalog_code',
         'catalog_name',
-        'type_code',
         'reference',
-        'side',
         'description_base',
         'dx',
         'dy',
@@ -22,9 +20,8 @@ class ModulePrice extends Model
         'complexity_factor',
         'labor_cost',
         'indirect_cost',
-        
+        'default_waste_percent',
         'is_active',
-        'source',
     ];
 
     protected $casts = [
@@ -34,6 +31,7 @@ class ModulePrice extends Model
         'complexity_factor' => 'decimal:2',
         'labor_cost' => 'decimal:2',
         'indirect_cost' => 'decimal:2',
-         'is_active' => 'boolean',
+        'default_waste_percent' => 'decimal:2',
+        'is_active' => 'boolean',
     ];
 }

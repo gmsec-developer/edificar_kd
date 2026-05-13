@@ -1,0 +1,138 @@
+<?php
+
+namespace App\Console\Commands;
+
+use App\Models\ModulePrice;
+use Illuminate\Console\Command;
+
+class ImportKitchenDrawModuleMaster extends Command
+{
+    protected $signature = 'edificar:import-kd-module-master {file=storage/app/imports/maestro_cubic06.csv} {--company_id=1} {--replace}';
+
+    protected $description = 'Import KitchenDraw module master CSV into module_prices';
+
+    public function handle(): int
+    {
+        $file = base_path($this->argument('file'));
+        $companyId = (int) $this->option('company_id');
+
+        if (!file_exists($file)) {
+            $this->error('CSV file not found: ' . $file);
+            return self::FAILURE;
+        }
+
+        if ($this->option('replace')) {
+            ModulePrice::where('company_id', $companyId)
+                ->where('source', 'kitchendraw_master')
+                ->delete();
+
+            $this->info('Previous kitchendraw_master rows deleted.');
+        }
+
+        $handle = fopen($file, 'r');
+
+        if (!$handle) {
+            $this->error('Could not open CSV file.');
+            return self::FAILURE;
+        }
+
+        $header = fgetcsv($handle, 0, ';');
+
+        $inserted = 0;
+        $updated = 0;
+        $skipped = 0;
+        $seen = [];
+
+        while (($row = fgetcsv($handle, 0, ';')) !== false) {
+            if (count($row) < 7) {
+                $skipped++;
+                continue;
+            }
+
+            $catalogCode = trim($row[0] ?? '');
+            $typeCode = trim($row[1] ?? '');
+            $reference = trim($row[2] ?? '');
+            $side = trim($row[3] ?? '');
+            $dx = (float) trim($row[4] ?? 0);
+            $dy = (float) trim($row[5] ?? 0);
+            $dz = (float) trim($row[6] ?? 0);
+
+            if ($catalogCode === '' || $reference === '' || $dx <= 0 || $dy <= 0 || $dz <= 0) {
+                $skipped++;
+                continue;
+            }
+
+            $dedupeKey = implode('|', [
+                $catalogCode,
+                $typeCode,
+                $reference,
+                $side,
+                number_format($dx, 2, '.', ''),
+                number_format($dy, 2, '.', ''),
+                number_format($dz, 2, '.', ''),
+            ]);
+
+            if (isset($seen[$dedupeKey])) {
+                $skipped++;
+                continue;
+            }
+
+            $seen[$dedupeKey] = true;
+
+            $module = ModulePrice::where('company_id', $companyId)
+                ->where('catalog_code', $catalogCode)
+                ->where('type_code', $typeCode)
+                ->where('reference', $reference)
+                ->where('side', $side)
+                ->where('dx', $dx)
+                ->where('dy', $dy)
+                ->where('dz', $dz)
+                ->first();
+
+            if ($module) {
+                $module->update([
+                    'catalog_name' => $catalogCode,
+                    'description_base' => $reference,
+                    'model' => $typeCode,
+                    'source' => 'kitchendraw_master',
+                    'is_active' => true,
+                ]);
+
+                $updated++;
+                continue;
+            }
+
+            ModulePrice::create([
+                'company_id' => $companyId,
+                'catalog_code' => $catalogCode,
+                'catalog_name' => $catalogCode,
+                'type_code' => $typeCode,
+                'reference' => $reference,
+                'side' => $side,
+                'description_base' => $reference,
+                'dx' => $dx,
+                'dy' => $dy,
+                'dz' => $dz,
+                'model' => $typeCode,
+                'complexity_level' => 'simple',
+                'complexity_factor' => 1.00,
+                'labor_cost' => 0,
+                'indirect_cost' => 0,
+                'default_waste_percent' => 10,
+                'is_active' => true,
+                'source' => 'kitchendraw_master',
+            ]);
+
+            $inserted++;
+        }
+
+        fclose($handle);
+
+        $this->info('Import completed.');
+        $this->line('Inserted: ' . $inserted);
+        $this->line('Updated: ' . $updated);
+        $this->line('Skipped: ' . $skipped);
+
+        return self::SUCCESS;
+    }
+}

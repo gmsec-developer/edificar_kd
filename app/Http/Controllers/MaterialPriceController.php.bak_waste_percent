@@ -32,26 +32,6 @@ class MaterialPriceController extends Controller
             $query->where('unit_cost', '>', 0);
         }
 
-        if ($request->filled('unit_type')) {
-            $query->where('unit_type', $request->input('unit_type'));
-        }
-
-        if ($request->input('waste_status') === 'zero') {
-            $query->where('waste_percent', 0);
-        }
-
-        if ($request->input('waste_status') === 'positive') {
-            $query->where('waste_percent', '>', 0);
-        }
-
-        if ($request->input('active') === 'yes') {
-            $query->where('is_active', true);
-        }
-
-        if ($request->input('active') === 'no') {
-            $query->where('is_active', false);
-        }
-
         $materials = $query->paginate(50)->withQueryString();
 
         $summary = [
@@ -83,7 +63,6 @@ class MaterialPriceController extends Controller
             'color_name' => 'nullable|string|max:255',
             'unit_type' => 'required|string|max:30',
             'unit_cost' => 'required|numeric|min:0',
-            'waste_percent' => 'required|numeric|min:0',
             'is_active' => 'nullable',
         ]);
 
@@ -92,55 +71,11 @@ class MaterialPriceController extends Controller
             'color_name' => $data['color_name'] ?? null,
             'unit_type' => $data['unit_type'],
             'unit_cost' => $data['unit_cost'],
-            'waste_percent' => $data['waste_percent'],
             'is_active' => $request->has('is_active'),
         ]);
 
         return redirect()
             ->route('material-prices.index')
             ->with('success', 'Precio de material actualizado correctamente.');
-    }
-    public function bulkUpdate(Request $request)
-    {
-        $data = $request->validate([
-            'material_ids' => 'required|array|min:1',
-            'material_ids.*' => 'integer',
-            'bulk_unit_type' => 'nullable|string|max:30',
-            'bulk_unit_cost' => 'nullable|numeric|min:0',
-            'bulk_waste_percent' => 'nullable|numeric|min:0',
-            'bulk_active' => 'nullable|in:keep,1,0',
-        ]);
-
-        $updates = [];
-
-        if ($request->filled('bulk_unit_type')) {
-            $updates['unit_type'] = $data['bulk_unit_type'];
-        }
-
-        if ($request->filled('bulk_unit_cost')) {
-            $updates['unit_cost'] = $data['bulk_unit_cost'];
-        }
-
-        if ($request->filled('bulk_waste_percent')) {
-            $updates['waste_percent'] = $data['bulk_waste_percent'];
-        }
-
-        if (($data['bulk_active'] ?? 'keep') !== 'keep') {
-            $updates['is_active'] = $data['bulk_active'] === '1';
-        }
-
-        if (count($updates) === 0) {
-            return redirect()
-                ->route('material-prices.index')
-                ->with('success', 'No se aplicaron cambios masivos.');
-        }
-
-        $count = MaterialPrice::where('company_id', auth()->user()->company_id)
-            ->whereIn('id', $data['material_ids'])
-            ->update($updates);
-
-        return redirect()
-            ->route('material-prices.index')
-            ->with('success', 'Cambio masivo aplicado a ' . $count . ' materiales.');
     }
 }

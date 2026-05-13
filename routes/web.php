@@ -120,3 +120,23 @@ Route::resource('module-prices', \App\Http\Controllers\ModulePriceController::cl
 Route::resource('material-prices', MaterialPriceController::class)
     ->only(['index', 'edit', 'update'])
     ->middleware(['auth', 'company.active']);
+Route::post('/material-prices/bulk-update', [\App\Http\Controllers\MaterialPriceController::class, 'bulkUpdate'])
+    ->middleware(['auth', 'company.active'])
+    ->name('material-prices.bulk-update');
+Route::get('/projects/clipboard/import', [\App\Http\Controllers\ProjectController::class, 'clipboardImport'])
+    ->middleware(['auth', 'company.active'])
+    ->name('projects.clipboard.import');
+
+Route::post('/projects/clipboard/preview', [\App\Http\Controllers\ProjectController::class, 'clipboardPreview'])
+    ->middleware(['auth', 'company.active'])
+    ->name('projects.clipboard.preview');
+Route::get('/projects/json/import', [\App\Http\Controllers\ProjectController::class, 'jsonImport'])
+    ->middleware(['auth', 'company.active'])
+    ->name('projects.json.import');
+
+Route::post('/projects/json/preview', [\App\Http\Controllers\ProjectController::class, 'jsonPreview'])
+    ->middleware(['auth', 'company.active'])
+    ->name('projects.json.preview');
+Route::post('/projects/export-json', [\App\Http\Controllers\ProjectController::class, 'exportEdificarJson'])
+    ->middleware(['auth', 'company.active'])
+    ->name('projects.export-json');

@@ -14,7 +14,6 @@ class MaterialPrice extends Model
         'color_name',
         'unit_type',
         'unit_cost',
-        'waste_percent',
         'is_active',
     ];
 }

@@ -101,35 +101,36 @@
 
     $pvpKitchen = (float) ($header['total_with_tax'] ?? 0);
 
-    $costRows = collect($despiece ?? []);
+    $wastePercent = 10;
 
-    $totalBaseCost = $costRows->sum('base_cost');
-    $wasteCost = $costRows->sum('waste_cost');
-    $totalEstimatedCost = $costRows->sum('total_cost');
+    $totalBaseCost = collect($costRows ?? [])->sum('total_cost');
+    $wasteCost = $totalBaseCost * ($wastePercent / 100);
+    $totalEstimatedCost = $totalBaseCost + $wasteCost;
     $grossMargin = $pvpKitchen - $totalEstimatedCost;
     $grossMarginPercent = $pvpKitchen > 0 ? ($grossMargin / $pvpKitchen) * 100 : 0;
 
-    $missingPrices = $costRows->filter(function ($row) {
-        return (float) ($row['unit_cost'] ?? 0) <= 0;
-    })->count();
+    $missingPrices = collect($costRows ?? [])->where('found', false)->count();
 
-    $materialSummary = $costRows->groupBy(function ($row) {
-        return ($row['material_code'] ?? '') . '|' . ($row['color_code'] ?? '') . '|' . ($row['unit_type'] ?? '');
-    })->map(function ($rows) {
+    $materialSummary = collect($costRows ?? [])->groupBy(function ($row) {
+        return ($row['material_code'] ?? '') . '|' . ($row['color_code'] ?? '');
+    })->map(function ($rows) use ($wastePercent) {
         $first = $rows->first();
+        $area = $rows->sum('area_m2');
+        $base = $rows->sum('total_cost');
+        $waste = $base * ($wastePercent / 100);
 
         return [
             'material_code' => $first['material_code'] ?? '',
             'material' => $first['material'] ?? '',
-            'color' => trim(($first['color_code'] ?? '') . ' ' . ($first['color_description'] ?? '')),
-            'rows' => $rows->count(),
-            'unit_type' => $first['unit_type'] ?? '',
-            'consumption' => $rows->sum('consumption'),
-            'unit_cost' => $first['unit_cost'] ?? 0,
-            'base_cost' => $rows->sum('base_cost'),
-            'waste_cost' => $rows->sum('waste_cost'),
-            'total_cost' => $rows->sum('total_cost'),
-            'found' => (float) ($first['unit_cost'] ?? 0) > 0,
+            'color_code' => $first['color_code'] ?? '',
+            'color_description' => $first['color_description'] ?? '',
+            'area_m2' => $area,
+            'unit_cost' => $first['unit_cost'] ?? null,
+            'base_cost' => $base,
+            'waste_cost' => $waste,
+            'total_cost' => $base + $waste,
+            'found' => $first['found'] ?? false,
+            'rows_count' => $rows->count(),
         ];
     })->values();
 @endphp
@@ -189,17 +190,17 @@
             <div style="display:grid; grid-template-columns: 1fr 1fr 1fr auto; gap:10px; align-items:end;">
                 <div>
                     <label class="ekd-label">Nuevo XML</label>
-                    <input type="file" name="xml_file" class="form-control form-control-sm" accept=".xml" required>
+                    <input type="file" name="xml_file" class="form-control form-control-sm" required>
                 </div>
 
                 <div>
                     <label class="ekd-label">Nuevo TXT</label>
-                    <input type="file" name="txt_file" class="form-control form-control-sm" accept=".txt" required>
+                    <input type="file" name="txt_file" class="form-control form-control-sm" required>
                 </div>
 
                 <div>
                     <label class="ekd-label">Nuevo SCN</label>
-                    <input type="file" name="scn_file" class="form-control form-control-sm" accept=".scn">
+                    <input type="file" name="scn_file" class="form-control form-control-sm">
                 </div>
 
                 <div>
@@ -292,13 +293,12 @@
                         <table class="ekd-table">
                             <thead>
                                 <tr>
-                                    <th>No</th><th>Ref. codigo</th><th>TipoCod</th><th>Desc. pieza</th><th>Largo</th><th>Ancho</th><th>Cantidad</th><th>Cod. Material</th><th>Material</th><th>Cod. Color</th><th>Color</th><th>Espesor</th><th>Area m2</th><th>Costo Unit.</th><th>Base</th><th>Desp. %</th><th>Desp.</th><th>Costo Total</th>
+                                    <th>No</th><th>Ref. codigo</th><th>TipoCod</th><th>Desc. pieza</th><th>Largo</th><th>Ancho</th><th>Cantidad</th><th>Cod. Material</th><th>Material</th><th>Cod. Color</th><th>Color</th><th>Espesor</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @foreach($despiece as $row)
                                     <tr>
-                                        <td class="ekd-center">{{ $row['line_number'] ?? '-' }}</td>
                                         <td class="ekd-num">{{ $row['module_number'] }}</td>
                                         <td><strong>{{ $row['module_reference'] }}</strong></td>
                                         <td class="ekd-center">{{ $row['type_code'] }}</td>
@@ -310,7 +310,7 @@
                                         <td class="ekd-material">{{ $row['material'] }}</td>
                                         <td class="ekd-center">{{ $row['color_code'] ?? '' }}</td>
                                         <td>{{ $row['color_description'] ?? '' }}</td>
-                                        <td class="ekd-num">{{ $row['thickness'] }}</td><td class="ekd-num">{{ number_format($row['area_m2'] ?? 0, 4) }}</td><td class="ekd-num">{{ number_format($row['unit_cost'] ?? 0, 4) }}</td><td class="ekd-num">{{ number_format($row['base_cost'] ?? 0, 4) }}</td><td class="ekd-num">{{ number_format($row['waste_percent'] ?? 0, 2) }}</td><td class="ekd-num">{{ number_format($row['waste_cost'] ?? 0, 4) }}</td><td class="ekd-num"><strong>{{ number_format($row['total_cost'] ?? 0, 4) }}</strong></td>
+                                        <td class="ekd-num">{{ $row['thickness'] }}</td>
                                     </tr>
                                 @endforeach
                             </tbody>
@@ -329,7 +329,7 @@
                     <div class="ekd-card-body">
                         <div class="ekd-summary-grid">
                             <div class="ekd-summary-item"><div class="ekd-label">Costo base</div><div class="ekd-value">{{ number_format($totalBaseCost, 2) }}</div></div>
-                            <div class="ekd-summary-item"><div class="ekd-label">Desperdicio aplicado</div><div class="ekd-value">{{ number_format($wasteCost, 2) }}</div></div>
+                            <div class="ekd-summary-item"><div class="ekd-label">Desperdicio {{ $wastePercent }}%</div><div class="ekd-value">{{ number_format($wasteCost, 2) }}</div></div>
                             <div class="ekd-summary-item"><div class="ekd-label">Costo estimado</div><div class="ekd-value">{{ number_format($totalEstimatedCost, 2) }}</div></div>
                             <div class="ekd-summary-item">
                                 <div class="ekd-label">Sin precio interno</div>
@@ -344,14 +344,7 @@
                         </div>
                     </div>
 
-                    <div class="ekd-card-header" style="display:flex; justify-content:space-between; align-items:center;">
-    <div>Resumen por material</div>
-
-    <button
-        type="button"
-        class="btn btn-outline-secondary btn-sm"
-        onclick="window.open('https://www.google.com/search?q=calculadora','calcWindow','width=420,height=700');">Calculadora</button>
-</div>
+                    <div class="ekd-card-header">Resumen por material</div>
                     <div class="ekd-table-wrap">
                         <table class="ekd-table">
                             <thead>
@@ -360,8 +353,7 @@
                                     <th>Material</th>
                                     <th>Color</th>
                                     <th>Filas</th>
-                                    <th>Consumo</th>
-                                    <th>Unidad</th>
+                                    <th>Area m2</th>
                                     <th>Costo unit.</th>
                                     <th>Costo base</th>
                                     <th>Desperdicio</th>
@@ -374,16 +366,15 @@
                                     <tr class="{{ $row['found'] ? '' : 'row-warning' }}">
                                         <td class="ekd-center">{{ $row['material_code'] }}</td>
                                         <td class="ekd-material">{{ $row['material'] }}</td>
-                                        <td>{{ $row['color'] ?? '' }}</td>
-                                        <td class="ekd-center">{{ $row['rows'] ?? 0 }}</td>
-                                        <td class="ekd-num">{{ number_format($row['consumption'] ?? 0, 4) }}</td>
-                                        <td class="ekd-center">{{ $row['unit_type'] ?? '' }}</td>
-                                        <td class="ekd-num">{{ isset($row['unit_cost']) ? number_format($row['unit_cost'], 4) : '-' }}</td>
-                                        <td class="ekd-num">{{ number_format($row['base_cost'] ?? 0, 2) }}</td>
-                                        <td class="ekd-num">{{ number_format($row['waste_cost'] ?? 0, 2) }}</td>
-                                        <td class="ekd-num"><strong>{{ number_format($row['total_cost'] ?? 0, 2) }}</strong></td>
+                                        <td>{{ $row['color_code'] }} {{ $row['color_description'] }}</td>
+                                        <td class="ekd-center">{{ $row['rows_count'] }}</td>
+                                        <td class="ekd-num">{{ number_format($row['area_m2'], 4) }}</td>
+                                        <td class="ekd-num">{{ $row['unit_cost'] !== null ? number_format($row['unit_cost'], 4) : '-' }}</td>
+                                        <td class="ekd-num">{{ number_format($row['base_cost'], 2) }}</td>
+                                        <td class="ekd-num">{{ number_format($row['waste_cost'], 2) }}</td>
+                                        <td class="ekd-num"><strong>{{ number_format($row['total_cost'], 2) }}</strong></td>
                                         <td>
-                                            @if(((float) ($row['unit_cost'] ?? 0)) > 0)
+                                            @if($row['found'])
                                                 <span class="status-ok">OK</span>
                                             @else
                                                 <span class="status-warning">Sin precio</span>
@@ -395,32 +386,17 @@
                         </table>
                     </div>
 
-                    <div class="ekd-card-header" style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-    <div>
-        Detalle costeado por pieza
-        <div style="font-size:11px; font-weight:600; color:#64748b; margin-top:4px; line-height:1.6;">
-            m2 = largo x ancho x cantidad | ml = largo x cantidad | unidad = cantidad directa
-            <br>
-            Base = consumo x costo unitario | Desperdicio = base x % | Total = base + desperdicio
-        </div>
-    </div>
-
-    <button
-        type="button"
-        class="btn btn-outline-secondary btn-sm"
-        onclick="window.open('https://www.google.com/search?q=calculadora','calcWindow','width=420,height=700');">Calculadora</button>
-</div>
+                    <div class="ekd-card-header">Detalle costeado por pieza</div>
                     <div class="ekd-table-wrap">
                         <table class="ekd-table">
                             <thead>
                                 <tr>
-                                    <th>Linea</th><th>No</th><th>Modulo</th><th>Tipo</th><th>Pieza</th><th>Largo</th><th>Ancho</th><th>Cant.</th><th>Consumo</th><th>Unidad</th><th>Cod. Material</th><th>Color</th><th>Costo unit.</th><th>Base</th><th>Desp.</th><th>Total</th><th>Estado</th>
+                                    <th>No</th><th>Modulo</th><th>Tipo</th><th>Pieza</th><th>Largo</th><th>Ancho</th><th>Cant.</th><th>Area m2</th><th>Cod. Material</th><th>Color</th><th>Costo unit.</th><th>Costo total</th><th>Estado</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @foreach(($costRows ?? []) as $row)
-                                    <tr class="{{ ((float) ($row['unit_cost'] ?? 0)) > 0 ? '' : 'row-warning' }}">
-                                        <td class="ekd-center">{{ $row['line_number'] ?? '-' }}</td>
+                                    <tr class="{{ $row['found'] ? '' : 'row-warning' }}">
                                         <td class="ekd-num">{{ $row['module_number'] }}</td>
                                         <td><strong>{{ $row['module_reference'] }}</strong></td>
                                         <td class="ekd-center">{{ $row['type_code'] }}</td>
@@ -428,16 +404,13 @@
                                         <td class="ekd-num">{{ $row['length'] }}</td>
                                         <td class="ekd-num">{{ $row['width'] }}</td>
                                         <td class="ekd-center">{{ $row['quantity'] }}</td>
-                                        <td class="ekd-num">{{ number_format($row['consumption'] ?? 0, 4) }}</td>
-                                        <td class="ekd-center">{{ $row['unit_type'] ?? '' }}</td>
+                                        <td class="ekd-num">{{ number_format($row['area_m2'], 4) }}</td>
                                         <td class="ekd-center">{{ $row['material_code'] }}</td>
-                                        <td>{{ $row['color_code'] ?? '' }} {{ $row['color_description'] ?? '' }}</td>
-                                        <td class="ekd-num">{{ ((float) ($row['unit_cost'] ?? 0)) > 0 ? number_format($row['unit_cost'], 4) : '-' }}</td>
-                                        <td class="ekd-num">{{ isset($row['base_cost']) ? number_format($row['base_cost'], 2) : '-' }}</td>
-                                        <td class="ekd-num">{{ isset($row['waste_cost']) ? number_format($row['waste_cost'], 2) : '-' }}</td>
-                                        <td class="ekd-num"><strong>{{ isset($row['total_cost']) ? number_format($row['total_cost'], 2) : '-' }}</strong></td>
+                                        <td>{{ $row['color_code'] }} {{ $row['color_description'] }}</td>
+                                        <td class="ekd-num">{{ $row['unit_cost'] !== null ? number_format($row['unit_cost'], 4) : '-' }}</td>
+                                        <td class="ekd-num">{{ $row['total_cost'] !== null ? number_format($row['total_cost'], 2) : '-' }}</td>
                                         <td>
-                                            @if(((float) ($row['unit_cost'] ?? 0)) > 0)
+                                            @if($row['found'])
                                                 <span class="status-ok">OK</span>
                                             @else
                                                 <span class="status-warning">Sin precio</span>
@@ -629,4 +602,3 @@
     });
 </script>
 @endsection
-

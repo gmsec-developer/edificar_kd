@@ -1,4 +1,4 @@
-@extends('layouts.app')
+﻿@extends('layouts.app')
 
 @section('content')
 <style>
@@ -37,7 +37,6 @@
     }
 
     .kd-alert-success { background:#ecfdf5; border:1px solid #86efac; color:#166534; padding:12px 42px 12px 12px; border-radius:8px; margin-bottom:14px; font-weight:700; position:relative; transition:opacity .4s ease; }
-    .kd-alert-error { background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; padding:12px 42px 12px 12px; border-radius:8px; margin-bottom:14px; font-weight:700; position:relative; transition:opacity .4s ease; }
     .kd-alert-close { position:absolute; right:12px; top:8px; border:0; background:transparent; color:#166534; font-size:18px; font-weight:800; cursor:pointer; }
 
 </style>
@@ -48,15 +47,6 @@
         <div class="kd-alert-success" id="kdSuccessAlert">
             {{ session('success') }}
             <button type="button" class="kd-alert-close" onclick="document.getElementById('kdSuccessAlert').style.display='none'">x</button>
-        </div>
-    @endif
-
-    @if($errors->any())
-        <div class="kd-alert-error" id="kdErrorAlert">
-            @foreach($errors->all() as $error)
-                <div>{{ $error }}</div>
-            @endforeach
-            <button type="button" class="kd-alert-close" onclick="document.getElementById('kdErrorAlert').style.display='none'">x</button>
         </div>
     @endif
 
@@ -156,7 +146,6 @@
 <script>
     document.addEventListener('DOMContentLoaded', function () {
         var alertBox = document.getElementById('kdSuccessAlert');
-        var errorBox = document.getElementById('kdErrorAlert');
 
         if (alertBox) {
             setTimeout(function () {
@@ -164,16 +153,6 @@
 
                 setTimeout(function () {
                     alertBox.style.display = 'none';
-                }, 400);
-            }, 5000);
-        }
-
-        if (errorBox) {
-            setTimeout(function () {
-                errorBox.style.opacity = '0';
-
-                setTimeout(function () {
-                    errorBox.style.display = 'none';
                 }, 400);
             }, 5000);
         }

@@ -73,7 +73,7 @@
                             <td><input name="complexity_factor" class="mp-input" type="number" step="0.01" min="0" value="{{ $item->complexity_factor }}"></td>
                             <td><input name="labor_cost" class="mp-input" type="number" step="0.01" min="0" value="{{ $item->labor_cost }}"></td>
                             <td><input name="indirect_cost" class="mp-input" type="number" step="0.01" min="0" value="{{ $item->indirect_cost }}"></td>
-                            <td><input name="default_waste_percent" class="mp-input" type="number" step="0.01" min="0" max="100" value="{{ $item->default_waste_percent }}"></td>
+{{-- DESACTIVADO: default_waste_percent ahora vive en material_prices.waste_percent --}}
 
                             <td>
                                 <label>

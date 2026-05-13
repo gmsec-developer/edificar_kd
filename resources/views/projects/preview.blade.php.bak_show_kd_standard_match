@@ -64,33 +64,6 @@
         white-space:nowrap;
     }
 
-    .ekd-kd-match {
-        display:inline-block;
-        border-radius:8px;
-        padding:4px 8px;
-        font-size:11px;
-        font-weight:800;
-        line-height:1.35;
-    }
-
-    .ekd-kd-exact {
-        background:#ecfdf5;
-        color:#166534;
-        border:1px solid #86efac;
-    }
-
-    .ekd-kd-adjusted {
-        background:#fff7ed;
-        color:#9a3412;
-        border:1px solid #fdba74;
-    }
-
-    .ekd-kd-unmatched {
-        background:#fef2f2;
-        color:#991b1b;
-        border:1px solid #fca5a5;
-    }
-
     .ekd-special-note {
         display:inline-block;
         background:#fef3c7;
@@ -257,7 +230,6 @@
                                     <th onclick="sortTable('modulesTable', 3)">Ancho</th>
                                     <th onclick="sortTable('modulesTable', 4)">Alto</th>
                                     <th onclick="sortTable('modulesTable', 5)">Profundidad</th>
-                                    <th>Base KD asignada</th>
                                     <th onclick="sortTable('modulesTable', 6)">Cantidad</th>
                                     <th onclick="sortTable('modulesTable', 7)">P.V. IVA</th>
                                     <th onclick="sortTable('modulesTable', 8)">Total IVA</th>
@@ -287,21 +259,6 @@
                                         <td class="ekd-num">{{ $module['dx'] }}</td>
                                         <td class="ekd-num">{{ $module['dz'] }}</td>
                                         <td class="ekd-num">{{ $module['dy'] }}</td>
-                                        <td>
-                                            @if(($module['kd_match_status'] ?? '') === 'exact')
-                                                <span class="ekd-kd-match ekd-kd-exact">Exacto<br>{{ $module['kd_standard_reference'] }}</span>
-                                            @elseif(($module['kd_match_status'] ?? '') === 'adjusted')
-                                                <span class="ekd-kd-match ekd-kd-adjusted">
-                                                    Ajustado<br>
-                                                    {{ $module['dx'] }}x{{ $module['dy'] }}x{{ $module['dz'] }}
-                                                    ->
-                                                    {{ $module['kd_standard_dx'] }}x{{ $module['kd_standard_dy'] }}x{{ $module['kd_standard_dz'] }}<br>
-                                                    {{ $module['kd_standard_reference'] }}
-                                                </span>
-                                            @else
-                                                <span class="ekd-kd-match ekd-kd-unmatched">Sin match</span>
-                                            @endif
-                                        </td>
                                         <td class="ekd-center">{{ $module['quantity'] }}</td>
                                         <td class="ekd-num">{{ $module['pvp'] }}</td>
                                         <td class="ekd-num"><strong>{{ $module['total'] }}</strong></td>
@@ -343,12 +300,6 @@
                                     <th onclick="sortTable('despieceTable', 9)">Cod. Color</th>
                                     <th onclick="sortTable('despieceTable', 10)">Color</th>
                                     <th onclick="sortTable('despieceTable', 11)">Espesor</th>
-                                    <th>Area m2</th>
-                                    <th>Costo Unit.</th>
-                                    <th>Base</th>
-                                    <th>Desp. %</th>
-                                    <th>Desp.</th>
-                                    <th>Costo Total</th>
                                     <th>Validacion</th>
                                 </tr>
                             </thead>
@@ -367,7 +318,6 @@
                                         $status = count($issues) > 0 ? 'warning' : 'ok';
                                     @endphp
                                     <tr data-type-code="{{ $row['type_code'] }}" data-status="{{ $status }}" class="{{ $status === 'warning' ? 'row-warning' : '' }}">
-                                        <td class="ekd-center">{{ $row['line_number'] ?? '-' }}</td>
                                         <td class="ekd-num">{{ $row['module_number'] }}</td>
                                         <td><strong>{{ $row['module_reference'] }}</strong></td>
                                         <td class="ekd-center">{{ $row['type_code'] }}</td>
@@ -379,7 +329,7 @@
                                         <td class="ekd-material">{{ $row['material'] }}</td>
                                         <td class="ekd-center">{{ $row['color_code'] ?? '' }}</td>
                                         <td>{{ $row['color_description'] ?? '' }}</td>
-                                        <td class="ekd-num">{{ $row['thickness'] }}</td><td class="ekd-num">{{ number_format($row['area_m2'] ?? 0, 4) }}</td><td class="ekd-num">{{ number_format($row['unit_cost'] ?? 0, 4) }}</td><td class="ekd-num">{{ number_format($row['base_cost'] ?? 0, 4) }}</td><td class="ekd-num">{{ number_format($row['waste_percent'] ?? 0, 2) }}</td><td class="ekd-num">{{ number_format($row['waste_cost'] ?? 0, 4) }}</td><td class="ekd-num"><strong>{{ number_format($row['total_cost'] ?? 0, 4) }}</strong></td>
+                                        <td class="ekd-num">{{ $row['thickness'] }}</td>
                                         <td>
                                             @if(count($issues) === 0)
                                                 <span class="status-ok">OK</span>
@@ -517,17 +467,4 @@
         button.classList.add('active');
     }
 </script>
-
-<div class="ekd-card">
-    <div class="ekd-card-header">Exportar formato EDIFICAR</div>
-    <div class="ekd-card-body">
-        <form method="POST" action="{{ route('projects.export-json') }}">
-    @csrf
-    <button type="submit" class="btn btn-outline-primary">
-        Exportar JSON EDIFICAR
-    </button>
-</form>
-    </div>
-</div>
-
 @endsection
