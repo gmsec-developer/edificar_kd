@@ -7,7 +7,7 @@
         <div class="bg-red-200 text-red-800 p-3 mb-4 rounded">
             <ul>
                 @foreach ($errors->all() as $error)
-                    <li>Ã¢â‚¬Â¢ {{ $error }}</li>
+                    <li>• {{ $error }}</li>
                 @endforeach
             </ul>
         </div>
@@ -24,18 +24,6 @@
         <div class="mb-4">
             <label>Email</label>
             <input type="email" name="email" class="w-full border p-2 rounded">
-        </div>
-
-        <div class="mb-4">
-            <label>Empresa</label>
-            <select name="company_id" class="w-full border p-2 rounded" required>
-                <option value="">Seleccione una empresa</option>
-                @foreach($companies as $company)
-                    <option value="{{ $company->id }}" {{ old('company_id') == $company->id ? 'selected' : '' }}>
-                        {{ $company->name }}
-                    </option>
-                @endforeach
-            </select>
         </div>
 
         <div class="mb-4">
@@ -58,14 +46,8 @@
                 class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
         </div>
 
-        <div class="flex gap-2">
-            <button class="bg-blue-600 text-white px-4 py-2 rounded">
-                Guardar
-            </button>
-
-            <a href="{{ route('users.index') }}" class="bg-gray-200 text-gray-700 px-4 py-2 rounded">
-                Cancelar
-            </a>
-        </div>
+        <button class="bg-blue-600 text-white px-4 py-2 rounded">
+            Guardar
+        </button>
     </form>
 @endsection

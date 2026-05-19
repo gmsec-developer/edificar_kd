@@ -1,0 +1,15 @@
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\bin\Debug\net8.0\Edificar.KDBridge.exe
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\bin\Debug\net8.0\Edificar.KDBridge.deps.json
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\bin\Debug\net8.0\Edificar.KDBridge.runtimeconfig.json
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\bin\Debug\net8.0\Edificar.KDBridge.dll
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\bin\Debug\net8.0\Edificar.KDBridge.pdb
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\obj\Debug\net8.0\Edificar.KDBridge.GeneratedMSBuildEditorConfig.editorconfig
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\obj\Debug\net8.0\Edificar.KDBridge.AssemblyInfoInputs.cache
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\obj\Debug\net8.0\Edificar.KDBridge.AssemblyInfo.cs
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\obj\Debug\net8.0\Edificar.KDBridge.csproj.CoreCompileInputs.cache
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\obj\Debug\net8.0\Edificar.KDBridge.sourcelink.json
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\obj\Debug\net8.0\Edificar.KDBridge.dll
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\obj\Debug\net8.0\refint\Edificar.KDBridge.dll
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\obj\Debug\net8.0\Edificar.KDBridge.pdb
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\obj\Debug\net8.0\Edificar.KDBridge.genruntimeconfig.cache
+C:\developer\edificar_kd\kd_bridge\Edificar.KDBridge\obj\Debug\net8.0\ref\Edificar.KDBridge.dll

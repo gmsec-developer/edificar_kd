@@ -19,79 +19,76 @@
     <aside :class="sidebarOpen ? 'w-64' : 'w-20'"
            class="bg-gray-900 text-white p-4 transition-all duration-300">
 
-        <div class="mb-8 w-full text-center">
-            <div class="flex flex-col items-center justify-center w-full">
+        <div class="flex items-center justify-between mb-6">
+
+        <div class="mb-6 space-y-4">
+
+        <div class="flex items-center justify-between mb-8">
+            <div class="flex items-center gap-3 min-w-0">
                 @if ($systemLogo)
                     <img src="{{ asset('storage/' . $systemLogo) }}"
-                         style="width:56px; height:56px; max-width:56px; max-height:56px; object-fit:contain; display:block;">
+                        style="width:36px; height:36px; max-width:36px; max-height:36px; object-fit:contain;">
                 @else
-                    <div style="width:56px; height:56px;"
-                         class="rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold">
+                    <div style="width:36px; height:36px;"
+                        class="rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold">
                         {{ substr($systemName, 0, 1) }}
                     </div>
                 @endif
 
-                <span x-show="sidebarOpen"
-                      class="font-bold text-white text-center mt-2 block w-full">
+                <span x-show="sidebarOpen" class="font-bold text-white truncate">
                     {{ $systemName }}
                 </span>
             </div>
+
+            <button @click="sidebarOpen = !sidebarOpen"
+                    class="p-2 rounded hover:bg-gray-800 text-white">
+                ☰
+            </button>
+        </div>
+
+</div>
         </div>
 
         <nav class="space-y-2">
-            <a href="{{ route('dashboard') }}"
-            :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-            class="flex items-center py-2 rounded hover:bg-gray-800">
+            <a href="{{ route('dashboard') }}" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-gray-800">
                 <span>🏠</span>
                 <span x-show="sidebarOpen">Dashboard</span>
             </a>
 
             @can('users.view')
-                <a href="{{ route('users.index') }}" 
-                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                class="flex items-center py-2 rounded hover:bg-gray-800">
+                <a href="{{ route('users.index') }}" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-gray-800">
                     <span>👥</span>
                     <span x-show="sidebarOpen">Usuarios</span>
                 </a>
             @endcan
 
             @can('roles.view')
-                <a href="{{ route('roles.index') }}" 
-                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                class="flex items-center py-2 rounded hover:bg-gray-800">
+                <a href="{{ route('roles.index') }}" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-gray-800">
                     <span>🛡️</span>
                     <span x-show="sidebarOpen">Roles</span>
                 </a>
             @endcan
 
             @can('settings.view')
-                <a href="{{ route('activity.index') }}" 
-                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                class="flex items-center py-2 rounded hover:bg-gray-800">
+                <a href="{{ route('activity.index') }}" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-gray-800">
                     <span>📋</span>
                     <span x-show="sidebarOpen">Auditoria</span>
                 </a>
             @endcan
 
             @can('settings.view')
-                <a href="{{ route('settings.index') }}"
-                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                class="flex items-center py-2 rounded hover:bg-gray-800">
+                <a href="{{ route('settings.index') }}" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-gray-800">
                     <span>⚙️</span>
                     <span x-show="sidebarOpen">Configuración</span>
                 </a>
             @endcan
 
-            <a href="{{ route('material-prices.index') }}"
-                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                class="flex items-center py-2 rounded hover:bg-gray-800">
+            <a href="{{ route('material-prices.index') }}" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-gray-800">
                 <span>💲</span>
                 <span x-show="sidebarOpen">Costos materiales</span>
             </a>
 
-            <a href="{{ route('profile.edit') }}" 
-                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                class="flex items-center py-2 rounded hover:bg-gray-800">
+            <a href="{{ route('profile.edit') }}" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-gray-800">
                 <span>👤</span>
                 <span x-show="sidebarOpen">Mi perfil</span>
             </a>
@@ -101,16 +98,7 @@
 
     <main class="flex-1">
         <header class="bg-white shadow px-6 py-4 flex justify-between items-center">
-            <div class="flex items-center">
-                <button @click="sidebarOpen = !sidebarOpen"
-                        class="mr-3 p-2 rounded bg-gray-900 hover:bg-gray-800 text-white shadow">
-                    ☰
-                </button>
-
-                <span class="font-semibold text-gray-700">
-                    {{ strtoupper(auth()->user()->company->name ?? $systemName) }}
-                </span>
-            </div>
+            <span class="font-semibold text-gray-700"> {{ $systemName }} </span>
 
             <div class="flex items-center gap-4">
                 <div x-data="{ notificationsOpen: false }" class="relative">

@@ -1,0 +1,44 @@
+{
+  "version": "1.0",
+  "source": "kitchendraw_sdk",
+  "generated_at": "2026-05-13T20:54:22.347762Z",
+  "header": {
+    "project_name": "Proyecto Demo EDIFICAR",
+    "client_name": "Cliente Demo",
+    "designer": "Mauricio",
+    "currency": "USD",
+    "total_without_tax": 1200.5,
+    "total_with_tax": 1380.58
+  },
+  "modules": [
+    {
+      "Number": 98,
+      "Reference": "1BF- 59",
+      "Description": "Modulo Bajo Fregadero",
+      "Quantity": 1,
+      "Dx": 590,
+      "Dy": 520,
+      "Dz": 450,
+      "Pvp": 320,
+      "Total": 320
+    }
+  ],
+  "parts": [
+    {
+      "LineNumber": 825,
+      "ModuleNumber": 98,
+      "ModuleReference": "1BF- 59",
+      "TypeCode": 2,
+      "Part": "PUER 111",
+      "Quantity": 2,
+      "Length": 289,
+      "Width": 444,
+      "Thickness": 19,
+      "MaterialCode": "01007",
+      "MaterialRaw": "DURAPLAC NOVOKOR 19 mm _N25005 MILAN",
+      "Material": "DURAPLAC NOVOKOR 19 mm",
+      "ColorCode": "N25005",
+      "ColorDescription": "MILAN"
+    }
+  ]
+}
