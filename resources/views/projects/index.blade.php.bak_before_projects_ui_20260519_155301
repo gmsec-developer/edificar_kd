@@ -11,13 +11,6 @@
     .kd-help { font-size: 12px; color: #6b7280; margin-top: 3px; }
     .kd-input { border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; width: 100%; background: #f9fafb; }
     .kd-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
-    .kd-summary-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:14px; margin-bottom:16px; }
-    .kd-summary-item { background:#fff; border:1px solid #d9dee7; border-radius:10px; padding:16px; box-shadow:0 2px 8px rgba(15,23,42,.05); }
-    .kd-summary-label { font-size:13px; color:#6b7280; font-weight:700; }
-    .kd-summary-value { font-size:28px; font-weight:800; color:#111827; margin-top:6px; }
-    .kd-filter-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; align-items:end; margin-bottom:16px; }
-    .kd-btn-secondary { background:#f3f4f6; color:#374151; padding:10px 14px; border-radius:8px; font-weight:700; text-decoration:none; display:inline-block; }
-    .kd-pagination { margin-top:16px; }
     .kd-btn-primary { background: #2563eb; color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: 700; }
     .kd-btn-primary:hover { background: #1d4ed8; }
     .kd-table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -68,71 +61,51 @@
     @endif
 
 
-    <div class="kd-summary-grid">
-        <div class="kd-summary-item">
-            <div class="kd-summary-label">Proyectos totales</div>
-            <div class="kd-summary-value">{{ $totalProjects }}</div>
-        </div>
+    <div class="kd-card">
+        <div class="kd-title">Cargar proyecto KitchenDraw</div>
+        <div class="kd-subtitle">Carga el XML, TXT de despiece y opcionalmente el SCN original como respaldo.</div>
 
-        <div class="kd-summary-item">
-            <div class="kd-summary-label">Validados</div>
-            <div class="kd-summary-value" style="color:#166534;">{{ $validatedProjects }}</div>
-        </div>
+        <form action="{{ route('projects.store') }}" method="POST" enctype="multipart/form-data">
+            @csrf
 
-        <div class="kd-summary-item">
-            <div class="kd-summary-label">En revision</div>
-            <div class="kd-summary-value" style="color:#92400e;">{{ $observedProjects }}</div>
-        </div>
+            <div class="kd-row">
+                <div class="kd-label">Archivo XML</div>
+                <div>
+                    <input type="file" name="xml_file" class="kd-input" accept=".xml" required>
+                    <div class="kd-help">Cabecera, ambientes, modulos y precios.</div>
+                </div>
+            </div>
+
+            <div class="kd-row">
+                <div class="kd-label">Archivo TXT de despiece</div>
+                <div>
+                    <input type="file" name="txt_file" class="kd-input" accept=".txt" required>
+                    <div class="kd-help">Piezas, materiales, medidas y relacion con modulos.</div>
+                </div>
+            </div>
+
+            <div class="kd-row">
+                <div class="kd-label">Archivo SCN original</div>
+                <div>
+                    <input type="file" name="scn_file" class="kd-input" accept=".scn">
+                    <div class="kd-help">Opcional: respaldo del archivo original KitchenDraw.</div>
+                </div>
+            </div>
+
+            <div class="kd-actions">
+                <button type="submit" class="kd-btn-primary">Procesar archivos</button>
+            </div>
+        </form>
     </div>
 
     <div class="kd-card">
         <div class="kd-title">Proyectos guardados</div>
 
-        <form method="GET" action="{{ route('projects.index') }}" class="kd-filter-grid">
-            <div>
-                <label class="kd-label">Buscar</label>
-                <input type="text" name="search" value="{{ request('search') }}" class="kd-input" placeholder="Proyecto, cliente o disenador">
-            </div>
-
-            <div>
-                <label class="kd-label">Estado</label>
-                <select name="status" class="kd-input">
-                    <option value="">Todos</option>
-                    <option value="technical_validated" @selected(request('status') === 'technical_validated')>Validado</option>
-                    <option value="technical_observed" @selected(request('status') === 'technical_observed')>En revision</option>
-                </select>
-            </div>
-
-            @if(auth()->user()->hasRole('superadmin'))
-                <div>
-                    <label class="kd-label">Empresa</label>
-                    <select name="company" class="kd-input">
-                        <option value="">Todas</option>
-                        @foreach($companies as $company)
-                            <option value="{{ $company->id }}" @selected(request('company') == $company->id)>
-                                {{ $company->name }}
-                            </option>
-                        @endforeach
-                    </select>
-                </div>
-            @else
-                <div></div>
-            @endif
-
-            <div>
-                <button type="submit" class="kd-btn-primary">Filtrar</button>
-                <a href="{{ route('projects.index') }}" class="kd-btn-secondary">Limpiar</a>
-            </div>
-        </form>
-
         <table class="kd-table">
             <thead>
                 <tr>
-                    <th>Codigo</th>
+                    <th>ID</th>
                     <th>Proyecto</th>
-                    @if(auth()->user()->hasRole('superadmin'))
-                        <th>Empresa</th>
-                    @endif
                     <th>Cliente</th>
                     <th>Disenador</th>
                     <th>Estado</th>
@@ -143,16 +116,10 @@
             <tbody>
                 @forelse($projects as $project)
                     <tr>
-                        <td>{{ $project->project_code ?? $project->id }}</td>
+                        <td>{{ $project->id }}</td>
                         <td>
     <strong>{{ $project->project_name ?? $project->name }}</strong>
 </td>
-
-@if(auth()->user()->hasRole('superadmin'))
-<td>
-    {{ $project->company->name ?? 'Sin empresa' }}
-</td>
-@endif
 
 <td>
     {{ $project->client_name ?? '-' }}
@@ -170,22 +137,18 @@
         <span class="kd-status">{{ $project->status }}</span>
     @endif
 </td>
-                        <td>{{ $project->created_at->format('d/m/Y H:i') }}</td>
+                        <td>{{ $project->created_at }}</td>
                         <td>
                             <a href="{{ route('projects.show', $project) }}" class="btn btn-sm btn-outline-primary">Ver</a>
                         </td>
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="{{ auth()->user()->hasRole('superadmin') ? 8 : 7 }}" class="text-muted">No hay proyectos guardados.</td>
+                        <td colspan="7" class="text-muted">No hay proyectos guardados.</td>
                     </tr>
                 @endforelse
             </tbody>
         </table>
-
-        <div class="kd-pagination">
-            {{ $projects->links() }}
-        </div>
     </div>
 
 </div>

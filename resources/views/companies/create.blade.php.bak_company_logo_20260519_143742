@@ -17,7 +17,7 @@
 
     <div style="background:white; padding:20px; border-radius:10px; max-width:500px;">
 
-        <form method="POST" action="{{ route('companies.store') }}" enctype="multipart/form-data">
+        <form method="POST" action="{{ route('companies.store') }}">
             @csrf
 
             <div style="margin-bottom:15px;">
@@ -30,7 +30,7 @@
             </div>
 
             <div style="margin-bottom:15px;">
-                <label>Codigo (unico)</label>
+                <label>Código (único)</label>
                 <input type="text"
                        name="code"
                        value="{{ old('code') }}"
@@ -39,35 +39,12 @@
             </div>
 
             <div style="margin-bottom:15px;">
-                <label>Codigo corto</label>
-                <input type="text"
-                    name="short_code"
-                    value="{{ old('short_code') }}"
-                    maxlength="10"
-                    required
-                    style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px;">
-
-                <div style="font-size:12px; color:#6b7280; margin-top:4px;">
-                    Ejemplo: ZUH, MUB, GMS.
-                </div>
-            </div>
-
-            <div style="margin-bottom:15px;">
-                <label>Maximo de usuarios</label>
+                <label>Máximo de usuarios</label>
                 <input type="number"
                        name="max_users"
                        value="{{ old('max_users', 5) }}"
                        min="1"
                        required
-                       style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px;">
-            </div>
-
-            <div style="margin-bottom:15px;">
-                <label>Logo empresa</label>
-
-                <input type="file"
-                       name="logo"
-                       accept="image/*"
                        style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px;">
             </div>
 

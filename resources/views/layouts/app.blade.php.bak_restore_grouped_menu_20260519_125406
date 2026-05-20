@@ -5,17 +5,6 @@
         @php
             $systemName = DB::table('settings')->where('key', 'system_name')->value('value') ?? 'Sistema';
             $systemLogo = DB::table('settings')->where('key', 'system_logo')->value('value');
-
-            $currentUser = auth()->user();
-            $companyLogo = $currentUser?->company?->logo;
-
-            $sidebarLogo = ($currentUser && !$currentUser->hasRole('superadmin') && $companyLogo)
-                ? $companyLogo
-                : $systemLogo;
-
-            $sidebarName = ($currentUser && !$currentUser->hasRole('superadmin') && $currentUser->company)
-                ? $currentUser->company->name
-                : $systemName;
         @endphp
     <title>{{ $systemName }}</title>    
   
@@ -32,116 +21,78 @@
 
         <div class="mb-8 w-full text-center">
             <div class="flex flex-col items-center justify-center w-full">
-                @if ($sidebarLogo)
-                    <img src="{{ asset('storage/' . $sidebarLogo) }}"
-                         style="width:70px; height:70px; max-width:70px; max-height:70px; object-fit:cover; display:block; border-radius:9999px; padding:0px; background:white;">
+                @if ($systemLogo)
+                    <img src="{{ asset('storage/' . $systemLogo) }}"
+                         style="width:56px; height:56px; max-width:56px; max-height:56px; object-fit:contain; display:block;">
                 @else
                     <div style="width:56px; height:56px;"
                          class="rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold">
-                        {{ substr($sidebarName, 0, 1) }}
+                        {{ substr($systemName, 0, 1) }}
                     </div>
                 @endif
 
                 <span x-show="sidebarOpen"
                       class="font-bold text-white text-center mt-2 block w-full">
-                    {{ $sidebarName }}
+                    {{ $systemName }}
                 </span>
             </div>
         </div>
 
-                <nav class="space-y-2">
-
-            <div x-show="sidebarOpen" class="mt-2 mb-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">
-                Operacion
-            </div>
-
+        <nav class="space-y-2">
             <a href="{{ route('dashboard') }}"
-               :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-               class="flex items-center py-2 rounded hover:bg-gray-800">
-                <span>&#128202;</span>
+            :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
+            class="flex items-center py-2 rounded hover:bg-gray-800">
+                <span>🏠</span>
                 <span x-show="sidebarOpen">Dashboard</span>
             </a>
 
-            @can('projects.view')
-                <a href="{{ route('projects.index') }}"
-                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                class="flex items-center py-2 rounded hover:bg-gray-800">
-                    <span>📁</span>
-                    <span x-show="sidebarOpen">Proyectos</span>
-                </a>
-            @endcan
-
-            @can('projects.import')
-                <a href="{{ route('projects.import') }}"
-                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                class="flex items-center py-2 rounded hover:bg-gray-800">
-                    <span>📥</span>
-                    <span x-show="sidebarOpen">Importaciones KD</span>
-                </a>
-            @endcan
-
-            <a href="{{ route('material-prices.index') }}"
-               :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-               class="flex items-center py-2 rounded hover:bg-gray-800">
-                <span>&#128176;</span>
-                <span x-show="sidebarOpen">Costos materiales</span>
-            </a>
-
-            <div x-show="sidebarOpen" class="mt-6 mb-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">
-                Administracion
-            </div>
-
-            @can('companies.view')
-                <a href="{{ route('companies.index') }}"
-                   :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                   class="flex items-center py-2 rounded hover:bg-gray-800">
-                    <span>&#127970;</span>
-                    <span x-show="sidebarOpen">Empresas</span>
-                </a>
-            @endcan
-
             @can('users.view')
-                <a href="{{ route('users.index') }}"
-                   :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                   class="flex items-center py-2 rounded hover:bg-gray-800">
-                    <span>&#128101;</span>
+                <a href="{{ route('users.index') }}" 
+                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
+                class="flex items-center py-2 rounded hover:bg-gray-800">
+                    <span>👥</span>
                     <span x-show="sidebarOpen">Usuarios</span>
                 </a>
             @endcan
 
             @can('roles.view')
-                <a href="{{ route('roles.index') }}"
-                   :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                   class="flex items-center py-2 rounded hover:bg-gray-800">
-                    <span>&#128737;</span>
+                <a href="{{ route('roles.index') }}" 
+                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
+                class="flex items-center py-2 rounded hover:bg-gray-800">
+                    <span>🛡️</span>
                     <span x-show="sidebarOpen">Roles</span>
                 </a>
             @endcan
 
             @can('settings.view')
-                <a href="{{ route('activity.index') }}"
-                   :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                   class="flex items-center py-2 rounded hover:bg-gray-800">
-                    <span>&#128203;</span>
+                <a href="{{ route('activity.index') }}" 
+                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
+                class="flex items-center py-2 rounded hover:bg-gray-800">
+                    <span>📋</span>
                     <span x-show="sidebarOpen">Auditoria</span>
-                </a>
-
-                <a href="{{ route('settings.index') }}"
-                   :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-                   class="flex items-center py-2 rounded hover:bg-gray-800">
-                    <span>&#9881;</span>
-                    <span x-show="sidebarOpen">Configuracion</span>
                 </a>
             @endcan
 
-            <div x-show="sidebarOpen" class="mt-6 mb-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">
-                Cuenta
-            </div>
+            @can('settings.view')
+                <a href="{{ route('settings.index') }}"
+                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
+                class="flex items-center py-2 rounded hover:bg-gray-800">
+                    <span>⚙️</span>
+                    <span x-show="sidebarOpen">Configuración</span>
+                </a>
+            @endcan
 
-            <a href="{{ route('profile.edit') }}"
-               :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
-               class="flex items-center py-2 rounded hover:bg-gray-800">
-                <span>&#128100;</span>
+            <a href="{{ route('material-prices.index') }}"
+                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
+                class="flex items-center py-2 rounded hover:bg-gray-800">
+                <span>💲</span>
+                <span x-show="sidebarOpen">Costos materiales</span>
+            </a>
+
+            <a href="{{ route('profile.edit') }}" 
+                :class="sidebarOpen ? 'justify-start gap-3 px-3' : 'justify-center px-0'"
+                class="flex items-center py-2 rounded hover:bg-gray-800">
+                <span>👤</span>
                 <span x-show="sidebarOpen">Mi perfil</span>
             </a>
 
@@ -254,7 +205,7 @@
                         @csrf
                         <button type="submit"
                                 class="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50">
-                            🚪 Cerrar sesion
+                            🚪 Cerrar sesión
                         </button>
                     </form>
                 </div>

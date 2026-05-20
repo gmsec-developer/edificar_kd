@@ -13,10 +13,6 @@ class UserController extends Controller
     {
         $query = User::query()->with(['roles', 'company']);
 
-        if (!auth()->user()->hasRole('superadmin')) {
-            $query->where('company_id', auth()->user()->company_id);
-        }
-
         if ($request->filled('search')) {
             $search = $request->search;
 
@@ -36,15 +32,10 @@ class UserController extends Controller
             });
         }
 
-        if (auth()->user()->hasRole('superadmin') && $request->filled('company')) {
-            $query->where('company_id', $request->company);
-        }
-
         $users = $query->orderBy('name')->paginate(10)->withQueryString();
         $roles = \Spatie\Permission\Models\Role::orderBy('name')->get();
-        $companies = \App\Models\Company::orderBy('name')->get();
 
-        return view('users.index', compact('users', 'roles', 'companies'));
+        return view('users.index', compact('users', 'roles'));
     }
 
     public function create()
@@ -163,10 +154,7 @@ class UserController extends Controller
                 ->with('success', 'No puedes desactivar un superadmin');
         }
 
-        $newStatus = !$user->is_active;
-
-        $user->is_active = $newStatus;
-        $user->status = $newStatus ? 'active' : 'inactive';
+        $user->is_active = !$user->is_active;
         $user->save();
 
         activity()

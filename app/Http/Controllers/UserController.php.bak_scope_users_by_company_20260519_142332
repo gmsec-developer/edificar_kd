@@ -13,10 +13,6 @@ class UserController extends Controller
     {
         $query = User::query()->with(['roles', 'company']);
 
-        if (!auth()->user()->hasRole('superadmin')) {
-            $query->where('company_id', auth()->user()->company_id);
-        }
-
         if ($request->filled('search')) {
             $search = $request->search;
 
@@ -36,7 +32,7 @@ class UserController extends Controller
             });
         }
 
-        if (auth()->user()->hasRole('superadmin') && $request->filled('company')) {
+        if ($request->filled('company')) {
             $query->where('company_id', $request->company);
         }
 

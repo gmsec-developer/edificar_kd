@@ -17,7 +17,7 @@
 
     <div style="background:white; padding:20px; border-radius:10px; max-width:500px;">
 
-        <form method="POST" action="{{ route('companies.update', $company) }}">
+        <form method="POST" action="{{ route('companies.update', $company) }}" enctype="multipart/form-data">
             @csrf
             @method('PUT')
 
@@ -31,7 +31,7 @@
             </div>
 
             <div style="margin-bottom:15px;">
-                <label>Código</label>
+                <label>Codigo</label>
                 <input type="text"
                        name="code"
                        value="{{ old('code', $company->code) }}"
@@ -40,12 +40,42 @@
             </div>
 
             <div style="margin-bottom:15px;">
-                <label>Máximo de usuarios</label>
+                <label>Codigo corto</label>
+                <input type="text"
+                    name="short_code"
+                    value="{{ old('short_code', $company->short_code) }}"
+                    maxlength="10"
+                    required
+                    style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px;">
+
+                <div style="font-size:12px; color:#6b7280; margin-top:4px;">
+                    Ejemplo: ZUH, MUB, GMS.
+                </div>
+            </div>
+
+            <div style="margin-bottom:15px;">
+                <label>Maximo de usuarios</label>
                 <input type="number"
                        name="max_users"
                        value="{{ old('max_users', $company->max_users) }}"
                        min="1"
                        required
+                       style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px;">
+            </div>
+
+            <div style="margin-bottom:15px;">
+                <label>Logo empresa</label>
+
+                @if ($company->logo)
+                    <div style="margin-bottom:10px;">
+                        <img src="{{ asset('storage/' . $company->logo) }}"
+                             style="width:70px; height:70px; object-fit:contain; border-radius:8px; border:1px solid #ddd;">
+                    </div>
+                @endif
+
+                <input type="file"
+                       name="logo"
+                       accept="image/*"
                        style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px;">
             </div>
 

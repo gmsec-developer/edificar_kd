@@ -68,6 +68,43 @@
     @endif
 
 
+    <div class="kd-card">
+        <div class="kd-title">Cargar proyecto KitchenDraw</div>
+        <div class="kd-subtitle">Carga el XML, TXT de despiece y opcionalmente el SCN original como respaldo.</div>
+
+        <form action="{{ route('projects.store') }}" method="POST" enctype="multipart/form-data">
+            @csrf
+
+            <div class="kd-row">
+                <div class="kd-label">Archivo XML</div>
+                <div>
+                    <input type="file" name="xml_file" class="kd-input" accept=".xml" required>
+                    <div class="kd-help">Cabecera, ambientes, modulos y precios.</div>
+                </div>
+            </div>
+
+            <div class="kd-row">
+                <div class="kd-label">Archivo TXT de despiece</div>
+                <div>
+                    <input type="file" name="txt_file" class="kd-input" accept=".txt" required>
+                    <div class="kd-help">Piezas, materiales, medidas y relacion con modulos.</div>
+                </div>
+            </div>
+
+            <div class="kd-row">
+                <div class="kd-label">Archivo SCN original</div>
+                <div>
+                    <input type="file" name="scn_file" class="kd-input" accept=".scn">
+                    <div class="kd-help">Opcional: respaldo del archivo original KitchenDraw.</div>
+                </div>
+            </div>
+
+            <div class="kd-actions">
+                <button type="submit" class="kd-btn-primary">Procesar archivos</button>
+            </div>
+        </form>
+    </div>
+
     <div class="kd-summary-grid">
         <div class="kd-summary-item">
             <div class="kd-summary-label">Proyectos totales</div>
@@ -128,7 +165,7 @@
         <table class="kd-table">
             <thead>
                 <tr>
-                    <th>Codigo</th>
+                    <th>ID</th>
                     <th>Proyecto</th>
                     @if(auth()->user()->hasRole('superadmin'))
                         <th>Empresa</th>
@@ -143,7 +180,7 @@
             <tbody>
                 @forelse($projects as $project)
                     <tr>
-                        <td>{{ $project->project_code ?? $project->id }}</td>
+                        <td>{{ $project->id }}</td>
                         <td>
     <strong>{{ $project->project_name ?? $project->name }}</strong>
 </td>

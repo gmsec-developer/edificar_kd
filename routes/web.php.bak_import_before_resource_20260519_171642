@@ -68,10 +68,6 @@ Route::middleware(['auth', 'company.active', 'permission:settings.view'])
     ->name('activity.index');
 
 Route::middleware(['auth', 'company.active'])->group(function () {
-    Route::get('projects/import', [App\Http\Controllers\ProjectController::class, 'import'])
-        ->middleware('permission:projects.import')
-        ->name('projects.import');
-
     Route::resource('projects', App\Http\Controllers\ProjectController::class);
 });
 

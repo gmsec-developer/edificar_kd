@@ -1,20 +1,17 @@
 @php
     $systemLogo = DB::table('settings')->where('key', 'system_logo')->value('value');
     $systemName = DB::table('settings')->where('key', 'system_name')->value('value') ?? 'Sistema';
-
-    $loginLogo = request()->cookie('last_company_logo') ?: $systemLogo;
-    $loginName = request()->cookie('last_company_name') ?: $systemName;
 @endphp
 
 <x-guest-layout>
     <div class="text-center mb-6">
-        @if ($loginLogo)
-            <img src="{{ asset('storage/' . $loginLogo) }}"
-                 alt="{{ $loginName }}"
-                 style="height:100px; width:100px; object-fit:cover; display:block; margin:0 auto 10px auto; border-radius:9999px; padding:3px; background:white;">
+        @if ($systemLogo)
+            <img src="{{ asset('storage/' . $systemLogo) }}"
+                 alt="{{ $systemName }}"
+                 style="height:80px; max-height:80px; object-fit:contain; margin:0 auto 10px auto;">
         @else
             <h1 class="text-2xl font-bold">
-                {{ $loginName }}
+                {{ $systemName }}
             </h1>
         @endif
     </div>

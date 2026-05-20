@@ -40,8 +40,8 @@
         </div>
 
         <div class="bg-white rounded-xl shadow p-5">
-            <p class="text-sm text-gray-500">Proyectos</p>
-            <h2 class="text-3xl font-bold text-blue-700 mt-2">{{ $totalProjects }}</h2>
+            <p class="text-sm text-gray-500">Roles</p>
+            <h2 class="text-3xl font-bold text-purple-700 mt-2">{{ $rolesCount }}</h2>
         </div>
     </div>
 
@@ -119,8 +119,8 @@
         </div>
 
         <div class="bg-white rounded-xl shadow p-5">
-            <p class="text-sm text-gray-500">Proyectos</p>
-            <h2 class="text-3xl font-bold text-blue-700 mt-2">{{ $totalProjects }}</h2>
+            <p class="text-sm text-gray-500">Usuarios inactivos</p>
+            <h2 class="text-3xl font-bold text-red-700 mt-2">{{ $inactiveUsers }}</h2>
         </div>
     </div>
 
@@ -151,88 +151,6 @@
     </div>
 @endif
 
-<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
-    <div class="bg-white rounded-xl shadow p-5">
-        <p class="text-sm text-gray-500">Proyectos totales</p>
-        <h2 class="text-3xl font-bold text-gray-800 mt-2">{{ $totalProjects }}</h2>
-    </div>
-
-    <div class="bg-white rounded-xl shadow p-5">
-        <p class="text-sm text-gray-500">Validados</p>
-        <h2 class="text-3xl font-bold text-green-700 mt-2">{{ $validatedProjects }}</h2>
-    </div>
-
-    <div class="bg-white rounded-xl shadow p-5">
-        <p class="text-sm text-gray-500">En revision</p>
-        <h2 class="text-3xl font-bold text-yellow-700 mt-2">{{ $observedProjects }}</h2>
-    </div>
-</div>
-
-<div class="bg-white rounded-xl shadow p-6 mt-6">
-    <h3 class="text-lg font-semibold text-gray-800 mb-4">Ultimos proyectos</h3>
-
-    <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
-            <thead class="bg-gray-50">
-                <tr>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Proyecto</th>
-                    @if ($isSuperAdmin)
-                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Empresa</th>
-                    @endif
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Usuario</th>
-                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Fecha</th>
-                </tr>
-            </thead>
-
-            <tbody class="bg-white divide-y divide-gray-200">
-                @forelse ($latestProjects as $project)
-                    <tr>
-                        <td class="px-4 py-3 text-sm font-medium text-gray-900">
-                            {{ $project->name }}
-                        </td>
-
-                        @if ($isSuperAdmin)
-                            <td class="px-4 py-3 text-sm text-gray-600">
-                                {{ $project->company->name ?? 'Sin empresa' }}
-                            </td>
-                        @endif
-
-                        <td class="px-4 py-3 text-sm">
-                            @if ($project->status === 'technical_validated')
-                                <span class="inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700">
-                                    Validado
-                                </span>
-                            @elseif ($project->status === 'technical_observed')
-                                <span class="inline-flex items-center rounded-full bg-yellow-50 px-2 py-1 text-xs font-medium text-yellow-700">
-                                    En revision
-                                </span>
-                            @else
-                                <span class="inline-flex items-center rounded-full bg-gray-50 px-2 py-1 text-xs font-medium text-gray-700">
-                                    {{ $project->status }}
-                                </span>
-                            @endif
-                        </td>
-
-                        <td class="px-4 py-3 text-sm text-gray-600">
-                            {{ $project->user->name ?? 'Sistema' }}
-                        </td>
-
-                        <td class="px-4 py-3 text-sm text-right text-gray-600">
-                            {{ $project->created_at->format('d/m/Y H:i') }}
-                        </td>
-                    </tr>
-                @empty
-                    <tr>
-                        <td colspan="{{ $isSuperAdmin ? 5 : 4 }}" class="px-4 py-6 text-center text-gray-500">
-                            No hay proyectos registrados.
-                        </td>
-                    </tr>
-                @endforelse
-            </tbody>
-        </table>
-    </div>
-</div>
 <div class="bg-white rounded-xl shadow p-6 mt-6">
     <h3 class="text-lg font-semibold text-gray-800 mb-4">Actividad reciente</h3>
 

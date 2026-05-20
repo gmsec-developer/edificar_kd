@@ -1,0 +1,1637 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Project;
+use App\Models\MaterialPrice;
+use Illuminate\Http\Request;
+use App\Models\ModulePrice;
+
+class ProjectController extends Controller
+{
+    public function index(Request $request)
+    {
+        $user = auth()->user();
+
+        $query = Project::query()->with(['company', 'user']);
+
+        if (!$user->hasRole('superadmin')) {
+            $query->where('company_id', $user->company_id);
+        }
+
+        if ($request->filled('search')) {
+            $search = trim($request->search);
+
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('scn_data', 'like', "%{$search}%");
+            });
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        if ($user->hasRole('superadmin') && $request->filled('company')) {
+            $query->where('company_id', $request->company);
+        }
+
+        $projects = $query
+            ->latest()
+            ->paginate(10)
+            ->withQueryString();
+
+        foreach ($projects as $project) {
+
+            $data = json_decode($project->scn_data, true);
+
+            $project->project_name = $data['header']['project_name'] ?? $project->name;
+            $project->client_name = $data['header']['client_name'] ?? '-';
+            $project->designer = $data['header']['designer'] ?? '-';
+        }
+
+        $totalProjects = Project::when(
+            !$user->hasRole('superadmin'),
+            fn ($q) => $q->where('company_id', $user->company_id)
+        )->count();
+
+        $validatedProjects = Project::when(
+            !$user->hasRole('superadmin'),
+            fn ($q) => $q->where('company_id', $user->company_id)
+        )->where('status', 'technical_validated')->count();
+
+        $observedProjects = Project::when(
+            !$user->hasRole('superadmin'),
+            fn ($q) => $q->where('company_id', $user->company_id)
+        )->where('status', 'technical_observed')->count();
+
+        $companies = \App\Models\Company::orderBy('name')->get();
+
+        return view('projects.index', compact(
+            'projects',
+            'companies',
+            'totalProjects',
+            'validatedProjects',
+            'observedProjects'
+        ));
+    }
+
+    public function create()
+    {
+        return redirect()->route('projects.index');
+    }
+
+    public function store(Request $request)
+    {
+        $request->validate([
+            'xml_file' => 'required|file',
+            'txt_file' => 'required|file',
+            'scn_file' => 'nullable|file',
+        ]);
+
+        $this->validateFileExtensions($request);
+
+        $xmlFile = $request->file('xml_file');
+        $txtFile = $request->file('txt_file');
+        $scnFile = $request->file('scn_file');
+
+        $xmlData = $this->parseKitchenDrawXml($xmlFile);
+        $despiece = $this->parseKitchenDrawTxt($txtFile);
+
+        $xmlData['modules'] = $this->expandModulesFromDespiece($xmlData['modules'] ?? [], $despiece);
+        $xmlData['modules'] = $this->syncModuleReferencesFromDespiece($xmlData['modules'], $despiece);
+        $xmlData['modules'] = $this->assignKitchenDrawStandardsToModules($xmlData['modules']);
+
+        $this->syncMaterialPricesFromDespiece($despiece);
+
+        $parsedData = [
+            'header' => $xmlData['header'],
+            'headings' => $xmlData['headings'],
+            'modules' => $xmlData['modules'],
+            'despiece' => $despiece,
+            'files' => [
+                'xml' => $xmlFile->getClientOriginalName(),
+                'txt' => $txtFile->getClientOriginalName(),
+                'scn' => $scnFile ? $scnFile->getClientOriginalName() : null,
+            ],
+        ];
+
+        $validation = $this->validateParsedProject($parsedData, true);
+
+        session([
+            'edificar_preview_data' => [
+                'header' => $parsedData['header'],
+                'headings' => $parsedData['headings'],
+                'modules' => $parsedData['modules'],
+                'despiece' => $parsedData['despiece'],
+                'files' => $parsedData['files'],
+            ]
+        ]);
+
+        return view('projects.preview', [
+            'header' => $parsedData['header'],
+            'headings' => $parsedData['headings'],
+            'modules' => $parsedData['modules'],
+            'despiece' => $parsedData['despiece'],
+            'files' => $parsedData['files'],
+            'validation' => $validation,
+        ]);
+    }
+
+    public function storeFinal(Request $request)
+    {
+        $data = json_decode($request->input('data'), true);
+
+        if (!$data) {
+            return back()->withErrors(['data' => 'No se recibieron datos validos para guardar.']);
+        }
+
+        $validation = $this->validateParsedProject($data, true);
+
+        $hasCriticalErrors = (($validation['critical_count'] ?? 0) > 0);
+
+        Project::create([
+            'company_id' => auth()->user()->company_id,
+            'user_id' => auth()->id(),
+            'name' => $data['header']['project_name'] ?? 'Proyecto KitchenDraw',
+            'status' => $hasCriticalErrors ? 'technical_observed' : 'technical_validated',
+            'scn_data' => json_encode($data),
+        ]);
+
+        // Auto module price creation disabled.
+        // Module prices are now controlled by the KitchenDraw master catalog.
+
+        return redirect()->route('projects.index')
+            ->with('success', $hasCriticalErrors ? 'Proyecto guardado en modo pruebas con observaciones tecnicas.' : 'Validacion tecnica guardada correctamente.');
+    }
+
+    public function replaceFinal(Request $request, Project $project)
+    {
+        if ($project->company_id !== auth()->user()->company_id) {
+            abort(403);
+        }
+
+        $data = json_decode($request->input('data'), true);
+
+        if (!$data) {
+            return back()->withErrors(['data' => 'No se recibieron datos validos para reemplazar.']);
+        }
+
+        $currentData = json_decode($project->scn_data, true) ?: [];
+
+        $currentEstimateId = trim($currentData['header']['estimate_id'] ?? '');
+        $newEstimateId = trim($data['header']['estimate_id'] ?? '');
+
+        if ($currentEstimateId === '' || $newEstimateId === '' || $currentEstimateId !== $newEstimateId) {
+            return redirect()->route('projects.show', $project)
+                ->withErrors([
+                    'replace_scene' => 'No se puede reemplazar. La escena no corresponde al proyecto actual. ID actual: ' . ($currentEstimateId ?: 'N/D') . ' | ID nuevo: ' . ($newEstimateId ?: 'N/D'),
+                ]);
+        }
+
+        $validation = $this->validateParsedProject($data, false);
+        $hasCriticalErrors = (($validation['critical_count'] ?? 0) > 0);
+
+        $this->syncMaterialPricesFromDespiece($data['despiece'] ?? []);
+
+        $project->update([
+            'name' => $data['header']['project_name'] ?? $project->name,
+            'status' => $hasCriticalErrors ? 'technical_observed' : 'technical_validated',
+            'scn_data' => json_encode($data),
+        ]);
+
+        // Auto module price creation disabled.
+        // Module prices are now controlled by the KitchenDraw master catalog.
+
+        return redirect()->route('projects.show', $project)
+            ->with('success', $hasCriticalErrors ? 'Escena reemplazada en modo pruebas con observaciones tecnicas.' : 'Escena reemplazada y validada correctamente.');
+    }
+    public function show(Project $project)
+    {
+        if ($project->company_id !== auth()->user()->company_id) {
+            abort(403);
+        }
+
+        $data = json_decode($project->scn_data, true);
+
+        $materialPrices = MaterialPrice::where('company_id', auth()->user()->company_id)
+            ->where('is_active', true)
+            ->get()
+            ->keyBy(function ($item) {
+                return $item->material_code . '|' . $item->color_code;
+            });
+
+
+        $modulePrices = ModulePrice::where('company_id', auth()->user()->company_id)
+        ->where('is_active', true)
+        ->get()
+        ->keyBy(function ($item) {
+            return implode('|', [
+                $item->catalog_code,
+                $item->reference,
+                (float) $item->dx,
+                (float) $item->dy,
+                (float) $item->dz,
+            ]);
+        });
+
+    $moduleSummaries = [];
+
+        $costRows = [];
+
+        foreach (($data['despiece'] ?? []) as $row) {
+            $length = (float) ($row['length'] ?? 0);
+            $width = (float) ($row['width'] ?? 0);
+            $quantity = (float) ($row['quantity'] ?? 0);
+
+            $areaM2 = ($length > 0 && $width > 0 && $quantity > 0)
+                ? (($length / 1000) * ($width / 1000) * $quantity)
+                : 0;
+
+            $key = ($row['material_code'] ?? '') . '|' . ($row['color_code'] ?? '');
+            $price = $materialPrices[$key] ?? null;
+
+            $unitCost = $price ? (float) $price->unit_cost : null;
+            $totalCost = $unitCost !== null ? $areaM2 * $unitCost : null;
+
+            $costRows[] = [
+                'module_number' => $row['module_number'] ?? '',
+                'module_reference' => $row['module_reference'] ?? '',
+                'type_code' => $row['type_code'] ?? '',
+                'part' => $row['part'] ?? '',
+                'quantity' => $quantity,
+                'length' => $length,
+                'width' => $width,
+                'area_m2' => $areaM2,
+                'material_code' => $row['material_code'] ?? '',
+                'material' => $row['material'] ?? '',
+                'color_code' => $row['color_code'] ?? '',
+                'color_description' => $row['color_description'] ?? '',
+                'unit_cost' => $unitCost,
+                'total_cost' => $totalCost,
+                'found' => $price ? true : false,
+            ];
+        }
+
+        $materialBaseCost = collect($costRows)
+            ->whereNotNull('total_cost')
+            ->sum('total_cost');
+
+        $missingCostRows = collect($costRows)
+            ->where('found', false)
+            ->count();
+
+        $wastePercent = 10;
+        $wasteCost = $materialBaseCost * ($wastePercent / 100);
+
+        $laborCost = 0;
+        $indirectCost = 0;
+        $profitPercent = 35;
+
+        $edificarCost = $materialBaseCost + $wasteCost + $laborCost + $indirectCost;
+        $pvpEdificar = $edificarCost / (1 - ($profitPercent / 100));
+
+        $pvpKd = (float) ($data['header']['total_with_tax'] ?? 0);
+        $difference = $pvpKd - $pvpEdificar;
+        $marginKd = $pvpKd > 0 ? (($pvpKd - $edificarCost) / $pvpKd) * 100 : 0;
+
+        $modulesByNumber = collect($data['modules'] ?? [])->keyBy(function ($module) {
+            return (int) ($module['number'] ?? 0);
+        });
+
+        $costRowsByModule = collect($costRows)->groupBy(function ($row) {
+            return (int) ($row['module_number'] ?? 0);
+        });
+
+        foreach ($modulesByNumber as $moduleNumber => $module) {
+            $rows = $costRowsByModule->get($moduleNumber, collect());
+
+            $moduleKey = implode('|', [
+                $module['catalog_code'] ?? '',
+                $module['reference'] ?? '',
+                (float) ($module['dx'] ?? 0),
+                (float) ($module['dy'] ?? 0),
+                (float) ($module['dz'] ?? 0),
+            ]);
+
+            $moduleMaster = $modulePrices[$moduleKey] ?? null;
+
+            $moduleMaterialCost = $rows
+                ->whereNotNull('total_cost')
+                ->sum('total_cost');
+
+            $moduleMissingCostRows = $rows
+                ->where('found', false)
+                ->count();
+
+            $moduleWastePercent = $moduleMaster ? (float) $moduleMaster->default_waste_percent : $wastePercent;
+            $moduleWasteCost = $moduleMaterialCost * ($moduleWastePercent / 100);
+
+            $moduleLaborCost = $moduleMaster ? (float) $moduleMaster->labor_cost : 0;
+            $moduleIndirectCost = $moduleMaster ? (float) $moduleMaster->indirect_cost : 0;
+            $moduleComplexityFactor = $moduleMaster ? (float) $moduleMaster->complexity_factor : 1.00;
+
+            $moduleBaseCost = $moduleMaterialCost + $moduleWasteCost + $moduleLaborCost + $moduleIndirectCost;
+            $moduleEdificarCost = $moduleBaseCost * $moduleComplexityFactor;
+
+            $modulePvpEdificar = $moduleEdificarCost > 0
+                ? $moduleEdificarCost / (1 - ($profitPercent / 100))
+                : 0;
+
+            $modulePvpKd = (float) ($module['total'] ?? 0);
+            $moduleDifference = $modulePvpKd - $modulePvpEdificar;
+
+            $moduleMarginKd = $modulePvpKd > 0
+                ? (($modulePvpKd - $moduleEdificarCost) / $modulePvpKd) * 100
+                : 0;
+
+            $moduleSummaries[] = [
+                'module_number' => $moduleNumber,
+                'reference' => $module['reference'] ?? '',
+                'description' => $module['description'] ?? '',
+                'catalog_code' => $module['catalog_code'] ?? '',
+                'catalog_name' => $module['catalog_name'] ?? '',
+                'dx' => $module['dx'] ?? '',
+                'dy' => $module['dy'] ?? '',
+                'dz' => $module['dz'] ?? '',
+                'pvp_kd' => $modulePvpKd,
+                'material_cost' => $moduleMaterialCost,
+                'waste_percent' => $moduleWastePercent,
+                'waste_cost' => $moduleWasteCost,
+                'labor_cost' => $moduleLaborCost,
+                'indirect_cost' => $moduleIndirectCost,
+                'complexity_factor' => $moduleComplexityFactor,
+                'edificar_cost' => $moduleEdificarCost,
+                'pvp_edificar' => $modulePvpEdificar,
+                'difference' => $moduleDifference,
+                'margin_kd' => $moduleMarginKd,
+                'missing_cost_rows' => $moduleMissingCostRows,
+                'despiece_rows' => $rows->count(),
+                'configured' => $moduleMaster ? true : false,
+            ];
+        }
+
+
+
+        return view('projects.show', [
+            'project' => $project,
+            'data' => $data,
+            'total' => 0,
+            'costRows' => $costRows,
+            'moduleSummaries' => $moduleSummaries,
+            'commercialSummary' => [
+                'material_base_cost' => $materialBaseCost,
+                'missing_cost_rows' => $missingCostRows,
+                'waste_percent' => $wastePercent,
+                'waste_cost' => $wasteCost,
+                'labor_cost' => $laborCost,
+                'indirect_cost' => $indirectCost,
+                'profit_percent' => $profitPercent,
+                'edificar_cost' => $edificarCost,
+                'pvp_edificar' => $pvpEdificar,
+                'pvp_kd' => $pvpKd,
+                'difference' => $difference,
+                'margin_kd' => $marginKd,
+            ],
+        ]);
+    }
+
+    public function edit(Project $project)
+    {
+        //
+    }
+
+    public function update(Request $request, Project $project)
+    {
+        if ($project->company_id !== auth()->user()->company_id) {
+            abort(403);
+        }
+
+        $request->validate([
+            'xml_file' => 'required|file',
+            'txt_file' => 'required|file',
+            'scn_file' => 'nullable|file',
+        ]);
+
+        $this->validateFileExtensions($request);
+
+        $xmlFile = $request->file('xml_file');
+        $txtFile = $request->file('txt_file');
+        $scnFile = $request->file('scn_file');
+
+        $xmlData = $this->parseKitchenDrawXml($xmlFile);
+        $despiece = $this->parseKitchenDrawTxt($txtFile);
+
+        $xmlData['modules'] = $this->expandModulesFromDespiece($xmlData['modules'] ?? [], $despiece);
+        $xmlData['modules'] = $this->syncModuleReferencesFromDespiece($xmlData['modules'], $despiece);
+        $xmlData['modules'] = $this->assignKitchenDrawStandardsToModules($xmlData['modules']);
+
+        $parsedData = [
+            'header' => $xmlData['header'],
+            'headings' => $xmlData['headings'],
+            'modules' => $xmlData['modules'],
+            'despiece' => $despiece,
+            'files' => [
+                'xml' => $xmlFile->getClientOriginalName(),
+                'txt' => $txtFile->getClientOriginalName(),
+                'scn' => $scnFile ? $scnFile->getClientOriginalName() : null,
+            ],
+        ];
+
+        $currentData = json_decode($project->scn_data, true) ?: [];
+
+        $currentEstimateId = trim($currentData['header']['estimate_id'] ?? '');
+        $newEstimateId = trim($parsedData['header']['estimate_id'] ?? '');
+
+        if ($currentEstimateId === '' || $newEstimateId === '' || $currentEstimateId !== $newEstimateId) {
+            return redirect()->route('projects.show', $project)
+                ->withErrors([
+                    'replace_scene' => 'La escena cargada no corresponde al proyecto actual. ID actual: ' . ($currentEstimateId ?: 'N/D') . ' | ID nuevo: ' . ($newEstimateId ?: 'N/D'),
+                ]);
+        }
+
+        $validation = $this->validateParsedProject($parsedData, false);
+
+        session([
+            'edificar_preview_data' => [
+                'header' => $parsedData['header'],
+                'headings' => $parsedData['headings'],
+                'modules' => $parsedData['modules'],
+                'despiece' => $parsedData['despiece'],
+                'files' => $parsedData['files'],
+            ]
+        ]);
+
+        return view('projects.preview', [
+            'header' => $parsedData['header'],
+            'headings' => $parsedData['headings'],
+            'modules' => $parsedData['modules'],
+            'despiece' => $parsedData['despiece'],
+            'files' => $parsedData['files'],
+            'validation' => $validation,
+            'replaceProject' => $project,
+        ]);
+    }
+    public function destroy(Project $project)
+    {
+        //
+    }
+
+    private function validateFileExtensions(Request $request): void
+    {
+        $rules = [
+            'xml_file' => 'xml',
+            'txt_file' => 'txt',
+            'scn_file' => 'scn',
+        ];
+
+        foreach ($rules as $field => $extension) {
+            $file = $request->file($field);
+
+            if (!$file) {
+                continue;
+            }
+
+            if (strtolower($file->getClientOriginalExtension()) !== $extension) {
+                $labels = [
+                    'xml_file' => 'XML',
+                    'txt_file' => 'TXT',
+                    'scn_file' => 'SCN',
+                ];
+
+                $label = $labels[$field] ?? $field;
+
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    $field => 'El archivo ' . $label . ' debe tener extension .' . $extension . '.',
+                ]);
+            }
+        }
+    }
+
+    private function validateParsedProject(array $data, bool $checkDuplicates = false): array
+    {
+        $critical = [];
+        $warnings = [];
+
+        $header = $data['header'] ?? [];
+        $modules = $data['modules'] ?? [];
+        $despiece = $data['despiece'] ?? [];
+
+        if (empty($header['project_name'])) {
+            $critical[] = 'No se encontro nombre de proyecto.';
+        }
+
+        if (empty($header['client_name'])) {
+            $critical[] = 'No se encontro nombre de cliente.';
+        }
+
+        if (count($modules) === 0) {
+            $critical[] = 'No se encontraron modulos en el XML.';
+        }
+
+        if (count($despiece) === 0) {
+            $critical[] = 'No se encontro despiece en el TXT.';
+        }
+
+        $rawModuleNumbers = collect($modules)
+            ->pluck('number')
+            ->map(fn($n) => (int) $n);
+
+        $duplicateModules = $rawModuleNumbers
+            ->duplicates()
+            ->unique()
+            ->values();
+
+        if ($duplicateModules->count() > 0) {
+            $critical[] = 'Hay numeros de modulo duplicados en XML: ' . $duplicateModules->implode(', ');
+        }
+
+        $moduleNumbers = $rawModuleNumbers->unique()->values();
+
+        $despieceNumbers = collect($despiece)
+            ->pluck('module_number')
+            ->map(fn($n) => (int) $n)
+            ->unique();
+
+        $modulesWithoutParts = $moduleNumbers->diff($despieceNumbers)->values();
+        $partsWithoutModule = $despieceNumbers->diff($moduleNumbers)->values();
+
+        if ($modulesWithoutParts->count() > 0) {
+            $warnings[] = 'Hay modulos sin despiece: ' . $modulesWithoutParts->implode(', ');
+        }
+
+        if ($partsWithoutModule->count() > 0) {
+            $critical[] = 'Hay despiece que no coincide con modulos XML: ' . $partsWithoutModule->implode(', ');
+        }
+
+        $xmlReferencesByNumber = collect($modules)
+            ->groupBy(fn($module) => (int) ($module['number'] ?? 0))
+            ->map(function ($items) {
+                return trim((string) ($items->first()['reference'] ?? ''));
+            });
+
+        $txtReferencesByNumber = collect($despiece)
+            ->groupBy(fn($row) => (int) ($row['module_number'] ?? 0))
+            ->map(function ($items) {
+                return $items
+                    ->pluck('module_reference')
+                    ->map(fn($reference) => trim((string) $reference))
+                    ->filter()
+                    ->unique()
+                    ->values();
+            });
+
+        foreach ($xmlReferencesByNumber as $moduleNumber => $xmlReference) {
+            if ((int) $moduleNumber <= 0 || $xmlReference === '') {
+                continue;
+            }
+
+            $txtReferences = $txtReferencesByNumber->get((int) $moduleNumber);
+
+            if (!$txtReferences || $txtReferences->count() === 0) {
+                continue;
+            }
+
+            if (!$txtReferences->contains($xmlReference)) {
+                $warnings[] = 'Referencia informativa diferente entre XML y TXT. Modulo ' . $moduleNumber . ' | XML: ' . $xmlReference . ' | TXT real: ' . $txtReferences->implode(', ');
+            }
+
+            if ($txtReferences->count() > 1) {
+                $critical[] = 'Modulo ' . $moduleNumber . ' tiene referencias mezcladas en TXT: ' . $txtReferences->implode(', ');
+            }
+        }
+
+        foreach ($modules as $module) {
+
+            $moduleNumber = (int) ($module['number'] ?? 0);
+
+            $dx = (float) ($module['dx'] ?? 0);
+            $dy = (float) ($module['dy'] ?? 0);
+            $dz = (float) ($module['dz'] ?? 0);
+
+            if ($dx <= 0 || $dy <= 0 || $dz <= 0) {
+                $critical[] = 'Modulo ' . $moduleNumber . ' tiene medidas invalidas.';
+            }
+        }
+
+        foreach ($despiece as $index => $row) {
+            $line = $index + 1;
+
+            if (empty($row['part'])) {
+                $critical[] = 'Linea despiece ' . $line . ': pieza vacia.';
+            }
+
+            if (empty($row['material_code']) || empty($row['material'])) {
+                $warnings[] = 'Linea despiece ' . $line . ': material incompleto.';
+            }
+
+            if (empty($row['quantity']) || empty($row['length']) || empty($row['width'])) {
+                $critical[] = 'Linea despiece ' . $line . ': medidas principales incompletas.';
+            }
+
+            if (
+                (float) ($row['quantity'] ?? 0) <= 0 ||
+                (float) ($row['length'] ?? 0) <= 0 ||
+                (float) ($row['width'] ?? 0) <= 0
+            ) {
+                $critical[] = 'Linea despiece ' . $line . ': medidas invalidas o menores a cero.';
+            }
+
+            if (empty($row['thickness'])) {
+                $warnings[] = 'Linea despiece ' . $line . ': espesor no definido.';
+            }
+
+            if (($row['type_code'] == 1 || $row['type_code'] == 2) && empty($row['color_code'])) {
+                $critical[] = 'Linea despiece ' . $line . ': color no separado.';
+            }
+        }
+
+        if ($checkDuplicates && $this->sceneAlreadyExists($data)) {
+            $critical[] = 'Esta escena parece ya importada anteriormente.';
+        }
+
+        return [
+            'critical' => $critical,
+            'warnings' => $warnings,
+            'critical_count' => count($critical),
+            'warning_count' => count($warnings),
+        ];
+    }
+
+    private function sceneAlreadyExists(array $data): bool
+    {
+        $header = $data['header'] ?? [];
+        $files = $data['files'] ?? [];
+
+        $estimateId = trim($header['estimate_id'] ?? '');
+        $projectName = trim($header['project_name'] ?? '');
+        $clientName = trim($header['client_name'] ?? '');
+        $xmlName = trim($files['xml'] ?? '');
+        $txtName = trim($files['txt'] ?? '');
+
+        $projects = Project::where('company_id', auth()->user()->company_id)->get();
+
+        foreach ($projects as $project) {
+            $saved = json_decode($project->scn_data, true);
+
+            if (!$saved) {
+                continue;
+            }
+
+            $savedHeader = $saved['header'] ?? [];
+            $savedFiles = $saved['files'] ?? [];
+
+            if ($estimateId !== '' && $estimateId === trim($savedHeader['estimate_id'] ?? '')) {
+                return true;
+            }
+
+            if ($xmlName !== '' && $txtName !== '' && $xmlName === trim($savedFiles['xml'] ?? '') && $txtName === trim($savedFiles['txt'] ?? '')) {
+                return true;
+            }
+
+            if ($projectName !== '' && $clientName !== ''
+                && $projectName === trim($savedHeader['project_name'] ?? '')
+                && $clientName === trim($savedHeader['client_name'] ?? '')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function parseKitchenDrawXml($file): array
+    {
+        $content = file_get_contents($file->getRealPath());
+
+        libxml_use_internal_errors(true);
+        $xml = simplexml_load_string($content);
+        libxml_clear_errors();
+
+        if (!$xml) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'xml_file' => 'No se pudo leer el archivo XML. Verifique que el archivo sea valido.',
+            ]);
+        }
+
+        $header = [
+            'estimate_id' => (string) ($xml->EstimateId ?? ''),
+            'project_name' => (string) ($xml->CustomerCompany ?? $xml['Name'] ?? ''),
+            'company_name' => (string) ($xml->CustomerBusiness ?? ''),
+            'client_name' => trim((string) ($xml->CustomerFirstName ?? '') . ' ' . (string) ($xml->CustomerName ?? '')),
+            'designer' => (string) ($xml->SellerId ?? ''),
+            'seller_name' => (string) ($xml->SellerName ?? ''),
+            'city' => (string) ($xml->CustomerCity ?? ''),
+            'country' => (string) ($xml->CustomerCountry ?? ''),
+            'currency' => (string) (($xml->Currency[0]['Code'] ?? 'USD')),
+            'state' => (string) ($xml->State ?? ''),
+            'creation_date' => (string) ($xml->CreationDate ?? ''),
+            'update_date' => (string) ($xml->UpdateDate ?? ''),
+            'total_without_tax' => $this->getXmlSellPrice($xml, 'Net', '0'),
+            'total_with_tax' => $this->getXmlSellPrice($xml, 'Net', '1'),
+        ];
+
+        $headings = [];
+        $modules = [];
+
+        foreach ($xml->Headings->Heading ?? [] as $heading) {
+            $headingName = (string) ($heading['Name'] ?? 'Sin ambiente');
+
+            $headingData = [
+                'name' => $headingName,
+                'catalog' => (string) ($heading->CatalogName ?? ''),
+                'model' => (string) ($heading->Model['Name'] ?? ''),
+                'total_without_tax' => $this->getXmlSellPrice($heading, 'Net', '0'),
+                'total_with_tax' => $this->getXmlSellPrice($heading, 'Net', '1'),
+                'items_count' => 0,
+            ];
+
+            foreach ($heading->Items->Item ?? [] as $item) {
+                $number = (int) ($item->Number ?? 0);
+
+                $modules[] = [
+                    'environment' => $headingName,
+                    'number' => $number,
+                    'item_id' => (string) ($item->ItemId ?? ''),
+                    'catalog_file' => (string) ($heading->CatalogFileName ?? ''),
+                    'catalog_code' => (string) ($heading->CatalogCode ?? ''),
+                    'catalog_name' => (string) ($heading->CatalogName ?? ''),
+                    'reference' => (string) ($item['Reference'] ?? ''),
+                    'description' => trim((string) ($item->Description ?? '')),
+                    'alternate_code' => trim((string) ($item->UserRef ?? '')),
+                    'manufacturing_note' => trim((string) ($item->ModifiedDescription ?? '')),
+                    'quantity' => (float) ($item->Quantity ?? 0),
+                    'pvp' => $this->getXmlSellPrice($item, 'Net', '1'),
+                    'total' => $this->getXmlSellPrice($item, 'NetTotal', '1'),
+                    'dx' => (string) ($item->Dx ?? ''),
+                    'dy' => (string) ($item->Dy ?? ''),
+                    'dz' => (string) ($item->Dz ?? ''),
+                    'catalog' => (string) ($item->CatalogName ?? ''),
+                    'model' => (string) ($item->Model['Name'] ?? ''),
+                    'color' => (string) ($item->Detail->Name ?? ''),
+                ];
+
+                $headingData['items_count']++;
+            }
+
+            $headings[] = $headingData;
+        }
+
+        usort($modules, fn($a, $b) => $a['number'] <=> $b['number']);
+
+        return [
+            'header' => $header,
+            'headings' => $headings,
+            'modules' => $modules,
+        ];
+    }
+
+    private function parseKitchenDrawTxt($file): array
+    {
+        $rows = [];
+        $lineNumber = 0;
+        $handle = fopen($file->getRealPath(), 'r');
+
+        if (!$handle) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'txt_file' => 'No se pudo leer el archivo TXT de despiece.',
+            ]);
+        }
+
+        while (($data = fgetcsv($handle, 0, ',')) !== false) {
+            $lineNumber++;
+
+            if (count($data) < 10) {
+                continue;
+            }
+
+            $materialRaw = trim($data[7], '" ');
+            $materialInfo = $this->splitMaterialAndColor($materialRaw);
+
+            $row = [
+                'line_number' => $lineNumber,
+                'type_code' => (int) $data[0],
+                'type_name' => $this->partTypeName((int) $data[0]),
+                'part' => trim($data[1], '" '),
+                'quantity' => (float) $data[2],
+                'length' => (float) $data[3],
+                'width' => (float) $data[4],
+                'thickness' => (float) $data[5],
+                'material_code' => trim($data[6], '" '),
+                'material' => $materialInfo['material'],
+                'color_code' => $materialInfo['color_code'],
+                'color_description' => $materialInfo['color_description'],
+                'module_number' => (int) $data[8],
+                'module_reference' => trim($data[9], '" '),
+            ];
+
+            $materialPrice = \App\Models\MaterialPrice::query()
+                ->where('material_code', $row['material_code'])
+                ->where('is_active', true)
+                ->first();
+
+            $unitType = $materialPrice->unit_type ?? 'm2';
+            $unitCost = (float) ($materialPrice->unit_cost ?? 0);
+            $wastePercent = (float) ($materialPrice->waste_percent ?? 0);
+            $quantity = (float) ($row['quantity'] ?? 0);
+            $lengthMm = (float) ($row['length'] ?? 0);
+            $widthMm = (float) ($row['width'] ?? 0);
+
+            $consumption = 0;
+            $areaM2 = 0;
+            $linearM = 0;
+
+            if ($unitType === 'm2') {
+                $areaM2 = ($lengthMm / 1000) * ($widthMm / 1000) * $quantity;
+                $consumption = $areaM2;
+            } elseif ($unitType === 'ml') {
+                $linearM = ($lengthMm / 1000) * $quantity;
+                $consumption = $linearM;
+            } else {
+                $consumption = $quantity;
+            }
+
+            $baseCost = $consumption * $unitCost;
+            $wasteCost = $baseCost * ($wastePercent / 100);
+            $totalCost = $baseCost + $wasteCost;
+
+            $row['unit_type'] = $unitType;
+            $row['consumption'] = round($consumption, 4);
+            $row['area_m2'] = round($areaM2, 4);
+            $row['linear_m'] = round($linearM, 4);
+            $row['unit_cost'] = round($unitCost, 4);
+            $row['base_cost'] = round($baseCost, 4);
+            $row['waste_percent'] = round($wastePercent, 2);
+            $row['waste_cost'] = round($wasteCost, 4);
+            $row['total_cost'] = round($totalCost, 4);
+
+            $rows[] = $row;
+        }
+
+        fclose($handle);
+
+        return $rows;
+    }
+
+    private function splitMaterialAndColor(string $materialRaw): array
+    {
+        $materialRaw = trim($materialRaw);
+
+        if (str_contains($materialRaw, '_')) {
+            [$material, $colorRaw] = explode('_', $materialRaw, 2);
+
+            $colorRaw = trim($colorRaw);
+
+            if (str_contains($colorRaw, ' ')) {
+                [$colorCode, $colorDescription] = explode(' ', $colorRaw, 2);
+            } else {
+                $colorCode = $colorRaw;
+                $colorDescription = '';
+            }
+
+            return [
+                'material' => trim($material),
+                'color_code' => trim($colorCode),
+                'color_description' => trim($colorDescription),
+            ];
+        }
+
+        return [
+            'material' => $materialRaw,
+            'color_code' => '',
+            'color_description' => '',
+        ];
+    }
+
+    private function expandModulesFromDespiece(array $modules, array $despiece): array
+    {
+        $expanded = [];
+        $usedNumbers = [];
+
+        $despieceByReference = collect($despiece)
+            ->filter(function ($row) {
+                return isset($row['module_number']) && (int) $row['module_number'] > 0;
+            })
+            ->groupBy(function ($row) {
+                return trim($row['module_reference'] ?? '');
+            })
+            ->map(function ($rows) {
+                return $rows
+                    ->pluck('module_number')
+                    ->map(fn($number) => (int) $number)
+                    ->unique()
+                    ->sort()
+                    ->values()
+                    ->all();
+            });
+
+        foreach ($modules as $module) {
+            $quantity = (float) ($module['quantity'] ?? 1);
+            $reference = trim($module['reference'] ?? '');
+            $originalNumber = (int) ($module['number'] ?? 0);
+
+            if ($quantity <= 1 || $reference === '') {
+                if ($originalNumber > 0 && in_array($originalNumber, $usedNumbers, true)) {
+                    continue;
+                }
+
+                $expanded[] = $module;
+
+                if ($originalNumber > 0) {
+                    $usedNumbers[] = $originalNumber;
+                }
+
+                continue;
+            }
+
+            $candidateNumbers = $despieceByReference->get($reference, []);
+
+            $candidateNumbers = collect($candidateNumbers)
+                ->filter(function ($number) use ($usedNumbers, $originalNumber) {
+                    return !in_array((int) $number, $usedNumbers, true) && (int) $number >= $originalNumber;
+                })
+                ->values()
+                ->all();
+
+            if (count($candidateNumbers) < (int) $quantity) {
+                if ($originalNumber > 0 && in_array($originalNumber, $usedNumbers, true)) {
+                    continue;
+                }
+
+                $expanded[] = $module;
+
+                if ($originalNumber > 0) {
+                    $usedNumbers[] = $originalNumber;
+                }
+
+                continue;
+            }
+
+            $numbersToUse = array_slice($candidateNumbers, 0, (int) $quantity);
+
+            $originalTotal = (float) ($module['total'] ?? $module['pvp'] ?? 0);
+            $unitTotal = $quantity > 0 ? ($originalTotal / $quantity) : $originalTotal;
+
+            foreach ($numbersToUse as $number) {
+                $copy = $module;
+                $copy['number'] = (int) $number;
+                $copy['quantity'] = 1;
+                $copy['total'] = $unitTotal;
+                $copy['pvp'] = $unitTotal;
+                $copy['grouped_quantity'] = $quantity;
+                $copy['grouped_from_number'] = $originalNumber;
+                $copy['expanded_from_grouped_module'] = true;
+
+                $expanded[] = $copy;
+                $usedNumbers[] = (int) $number;
+            }
+        }
+
+        $expanded = collect($expanded)
+            ->unique(function ($module) {
+                return (int) ($module['number'] ?? 0);
+            })
+            ->values()
+            ->all();
+
+        usort($expanded, fn($a, $b) => ((int) ($a['number'] ?? 0)) <=> ((int) ($b['number'] ?? 0)));
+
+        return $expanded;
+    }
+    private function syncModuleReferencesFromDespiece(array $modules, array $despiece): array
+    {
+        $referencesByNumber = collect($despiece)
+            ->groupBy(function ($row) {
+                return (int) ($row['module_number'] ?? 0);
+            })
+            ->map(function ($rows) {
+                return $rows
+                    ->pluck('module_reference')
+                    ->map(fn($reference) => trim((string) $reference))
+                    ->filter()
+                    ->unique()
+                    ->values();
+            });
+
+        foreach ($modules as $index => $module) {
+            $number = (int) ($module['number'] ?? 0);
+
+            if ($number <= 0) {
+                continue;
+            }
+
+            $txtReferences = $referencesByNumber->get($number);
+
+            if (!$txtReferences || $txtReferences->count() !== 1) {
+                continue;
+            }
+
+            $txtReference = $txtReferences->first();
+            $currentReference = trim((string) ($module['reference'] ?? ''));
+
+            if ($txtReference !== '' && $txtReference !== $currentReference) {
+                $modules[$index]['xml_reference'] = $currentReference;
+                $modules[$index]['reference'] = $txtReference;
+                $modules[$index]['reference_source'] = 'txt';
+            }
+        }
+
+        return $modules;
+    }
+private function assignKitchenDrawStandardsToModules(array $modules): array
+    {
+        foreach ($modules as $index => $module) {
+            $standard = $this->findClosestKitchenDrawModule($module);
+
+            if (!$standard) {
+                $modules[$index]['kd_match_status'] = 'unmatched';
+                $modules[$index]['kd_standard_reference'] = null;
+                $modules[$index]['kd_standard_dx'] = null;
+                $modules[$index]['kd_standard_dy'] = null;
+                $modules[$index]['kd_standard_dz'] = null;
+                continue;
+            }
+
+            $modules[$index]['kd_match_status'] = (
+                (float) ($module['dx'] ?? 0) == (float) $standard->dx &&
+                (float) ($module['dy'] ?? 0) == (float) $standard->dy &&
+                (float) ($module['dz'] ?? 0) == (float) $standard->dz
+            ) ? 'exact' : 'adjusted';
+
+            $modules[$index]['kd_standard_reference'] = $standard->reference;
+            $modules[$index]['kd_standard_dx'] = (float) $standard->dx;
+            $modules[$index]['kd_standard_dy'] = (float) $standard->dy;
+            $modules[$index]['kd_standard_dz'] = (float) $standard->dz;
+        }
+
+        return $modules;
+    }
+    private function findClosestKitchenDrawModule(array $module): ?\App\Models\ModulePrice
+    {
+        $reference = trim((string) ($module['reference'] ?? ''));
+        $familyPrefix = $this->getKitchenDrawReferenceFamily($reference);
+        $dx = (float) ($module['dx'] ?? 0);
+        $dy = (float) ($module['dy'] ?? 0);
+        $dz = (float) ($module['dz'] ?? 0);
+
+        if (
+            $familyPrefix === '' ||
+            $dx <= 0 ||
+            $dy <= 0 ||
+            $dz <= 0
+        ) {
+            return null;
+        }
+
+        $companyId = auth()->check()
+            ? auth()->user()->company_id
+            : 1;
+
+        $exactMatch = \App\Models\ModulePrice::query()
+            ->where('company_id', $companyId)
+            ->where('source', 'kitchendraw_master')
+            ->where('reference', 'like', $reference . '%')
+            ->where('dx', $dx)
+            ->where('dy', $dy)
+            ->where('dz', $dz)
+            ->first();
+
+        if ($exactMatch) {
+            return $exactMatch;
+        }
+
+        return \App\Models\ModulePrice::query()
+            ->where('company_id', $companyId)
+            ->where('source', 'kitchendraw_master')
+            ->where('reference', 'like', $familyPrefix . '%')
+            ->where('dx', '>=', $dx)
+            ->where('dy', '>=', $dy)
+            ->where('dz', '>=', $dz)
+            ->orderByRaw('(dx - ?) + (dy - ?) + (dz - ?) asc', [$dx, $dy, $dz])
+            ->orderBy('dx')
+            ->orderBy('dy')
+            ->orderBy('dz')
+            ->first();
+    }
+    private function getKitchenDrawReferenceFamily(string $reference): string
+    {
+        $reference = trim($reference);
+
+        if ($reference === '') {
+            return '';
+        }
+
+        $reference = preg_replace('/\s+/', ' ', $reference);
+
+        if (preg_match('/^(.*?)-\s*\d+(?:_\d+)*$/', $reference, $matches)) {
+            return rtrim(trim($matches[1]), '- ');
+        }
+
+        if (preg_match('/^(.*?)-\s*\d+$/', $reference, $matches)) {
+            return rtrim(trim($matches[1]), '- ');
+        }
+
+        return rtrim(trim($reference), '- ');
+    }
+    private function syncModulePricesFromModules(array $modules): void
+    {
+        $companyId = auth()->user()->company_id;
+
+        foreach ($modules as $module) {
+            $catalogCode = trim($module['catalog_code'] ?? '');
+            $catalogName = trim($module['catalog_name'] ?? '');
+            $reference = trim($module['reference'] ?? '');
+
+            $dx = (float) ($module['dx'] ?? 0);
+            $dy = (float) ($module['dy'] ?? 0);
+            $dz = (float) ($module['dz'] ?? 0);
+
+            if ($catalogCode === '' || $reference === '') {
+                continue;
+            }
+
+            ModulePrice::firstOrCreate(
+                [
+                    'company_id' => $companyId,
+                    'catalog_code' => $catalogCode,
+                    'reference' => $reference,
+                    'dx' => $dx,
+                    'dy' => $dy,
+                    'dz' => $dz,
+                ],
+                [
+                    'catalog_name' => $catalogName,
+                    'description_base' => trim($module['description'] ?? ''),
+                    'model' => trim($module['model'] ?? ''),
+                    'complexity_level' => 'simple',
+                    'complexity_factor' => 1.00,
+                    'labor_cost' => 0,
+                    'indirect_cost' => 0,
+                    'default_waste_percent' => 10,
+                    'is_active' => true,
+                ]
+            );
+        }
+    }
+    private function cleanKitchenDrawText(?string $value): string
+    {
+        $value = (string) $value;
+
+        $value = str_replace(["ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¿ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â½", "\x00"], "", $value);
+
+        if (!mb_check_encoding($value, 'UTF-8')) {
+            $converted = @mb_convert_encoding($value, 'UTF-8', 'Windows-1252,ISO-8859-1,UTF-8');
+            if ($converted !== false) {
+                $value = $converted;
+            }
+        }
+
+        $value = preg_replace('/[^\P{C}\t\r\n]+/u', '', $value);
+        $value = preg_replace('/\s+/', ' ', $value);
+
+        return trim($value);
+    }
+
+    private function syncMaterialPricesFromDespiece(array $despiece): void
+    {
+        $companyId = auth()->user()->company_id;
+
+        foreach ($despiece as $row) {
+            $materialCode = trim($row['material_code'] ?? '');
+            $materialName = $this->cleanKitchenDrawText(trim($row['material'] ?? ''));
+            $colorCode = trim($row['color_code'] ?? '');
+            $colorName = $this->cleanKitchenDrawText(trim($row['color_description'] ?? ''));
+
+            if ($materialCode === '' || $materialName === '') {
+                continue;
+            }
+
+            MaterialPrice::firstOrCreate(
+                [
+                    'company_id' => $companyId,
+                    'material_code' => $materialCode,
+                    'color_code' => $colorCode,
+                ],
+                [
+                    'material_name' => $materialName,
+                    'color_name' => $colorName,
+                    'unit_type' => 'm2',
+                    'unit_cost' => 0,
+                    'is_active' => true,
+                ]
+            );
+        }
+    }
+
+    private function getXmlSellPrice($node, string $type, string $withTax): ?string
+    {
+        foreach ($node->SellPrice ?? [] as $price) {
+            if ((string) ($price['Type'] ?? '') === $type && (string) ($price['WithTax'] ?? '') === $withTax) {
+                return (string) $price;
+            }
+        }
+
+        return null;
+    }
+
+    private function partTypeName(int $type): string
+    {
+        return match ($type) {
+            1 => 'Pieza',
+            2 => 'Puerta/Frente',
+            4 => 'Accesorio/Material',
+            default => 'Tipo ' . $type,
+        };
+    }
+    public function clipboardImport()
+    {
+        return view('projects.paste_import');
+    }
+
+    public function clipboardPreview(\Illuminate\Http\Request $request)
+    {
+        $data = $request->validate([
+            'modules_raw' => 'required|string',
+            'parts_raw' => 'required|string',
+        ]);
+
+        $modules = $this->parseClipboardModules($data['modules_raw']);
+        $parts = $this->parseClipboardParts($data['parts_raw']);
+
+        return view('projects.paste_import', [
+            'modulesRaw' => $data['modules_raw'],
+            'partsRaw' => $data['parts_raw'],
+            'modules' => $modules,
+            'parts' => $parts,
+        ]);
+    }
+
+    private function parseClipboardTable(string $raw): array
+    {
+        $raw = str_replace(["\r\n", "\r"], "\n", trim($raw));
+
+        $handle = fopen('php://temp', 'r+');
+        fwrite($handle, $raw);
+        rewind($handle);
+
+        $rows = [];
+
+        while (($row = fgetcsv($handle, 0, "\t")) !== false) {
+            if (count(array_filter($row, fn($v) => trim((string) $v) !== '')) === 0) {
+                continue;
+            }
+
+            $rows[] = array_map(fn($v) => trim((string) $v), $row);
+        }
+
+        fclose($handle);
+
+        return $rows;
+    }
+
+    private function parseClipboardDecimal(string $value): float
+    {
+        $value = trim($value);
+        $value = str_replace('.', '', $value);
+        $value = str_replace(',', '.', $value);
+
+        return (float) $value;
+    }
+
+    private function parseClipboardModules(string $raw): array
+    {
+        $rows = $this->parseClipboardTable($raw);
+        $modules = [];
+
+        foreach ($rows as $row) {
+            if (count($row) < 8) {
+                continue;
+            }
+
+            $modules[] = [
+                'number' => (int) ($row[0] ?? 0),
+                'reference' => trim($row[1] ?? ''),
+                'description' => trim(preg_replace('/\s+/', ' ', $row[3] ?? '')),
+                'quantity' => (float) ($row[4] ?? 0),
+                'unit_price' => $this->parseClipboardDecimal($row[6] ?? '0'),
+                'total_price' => $this->parseClipboardDecimal($row[7] ?? '0'),
+            ];
+        }
+
+        return $modules;
+    }
+
+    private function parseClipboardParts(string $raw): array
+    {
+        $rows = $this->parseClipboardTable($raw);
+        $parts = [];
+
+        foreach ($rows as $row) {
+            if (count($row) < 11) {
+                continue;
+            }
+
+            $materialInfo = $this->splitMaterialAndColor($row[9] ?? '');
+
+            $parts[] = [
+                'module_number' => (int) ($row[0] ?? 0),
+                'module_reference' => trim($row[1] ?? ''),
+                'module_name' => trim($row[2] ?? ''),
+                'type_code' => (int) ($row[3] ?? 0),
+                'type_name' => $this->partTypeName((int) ($row[3] ?? 0)),
+                'part' => trim($row[4] ?? ''),
+                'quantity' => (float) ($row[5] ?? 0),
+                'length' => (float) ($row[6] ?? 0),
+                'width' => (float) ($row[7] ?? 0),
+                'side' => trim($row[8] ?? ''),
+                'material_raw' => trim($row[9] ?? ''),
+                'material' => $materialInfo['material'],
+                'color_code' => $materialInfo['color_code'],
+                'color_description' => $materialInfo['color_description'],
+                'thickness' => (float) ($row[10] ?? 0),
+            ];
+        }
+
+        return $parts;
+    }
+    public function jsonImport()
+    {
+        return view('projects.json_import');
+    }
+
+    public function jsonPreview(\Illuminate\Http\Request $request)
+    {
+        $request->validate([
+            'json_file' => 'required|file',
+        ]);
+
+        $file = $request->file('json_file');
+
+        if (strtolower($file->getClientOriginalExtension()) !== 'json') {
+            return back()->withErrors(['json_file' => 'El archivo debe tener extension .json']);
+        }
+
+        $raw = file_get_contents($file->getRealPath());
+        $payload = json_decode($raw, true);
+
+        if (!is_array($payload)) {
+            return back()->withErrors(['json_file' => 'No se pudo leer el JSON o el formato no es valido.']);
+        }
+
+        $parsedData = $this->normalizeEdificarImportJson($payload, $file->getClientOriginalName());
+
+        $parsedData['modules'] = $this->assignKitchenDrawStandardsToModules($parsedData['modules']);
+
+        $this->syncMaterialPricesFromDespiece($parsedData['despiece']);
+
+        $validation = $this->validateParsedProject($parsedData, false);
+
+        session([
+            'edificar_preview_data' => [
+                'header' => $parsedData['header'],
+                'headings' => $parsedData['headings'],
+                'modules' => $parsedData['modules'],
+                'despiece' => $parsedData['despiece'],
+                'files' => $parsedData['files'],
+            ]
+        ]);
+
+        return view('projects.preview', [
+            'header' => $parsedData['header'],
+            'headings' => $parsedData['headings'],
+            'modules' => $parsedData['modules'],
+            'despiece' => $parsedData['despiece'],
+            'files' => $parsedData['files'],
+            'validation' => $validation,
+        ]);
+    }
+
+    private function normalizeEdificarImportJson(array $payload, string $fileName): array
+    {
+        $header = $payload['header'] ?? [];
+        $modulesRaw = $payload['modules'] ?? [];
+        $partsRaw = $payload['parts'] ?? [];
+
+        $modules = [];
+
+        foreach ($modulesRaw as $module) {
+            $modules[] = [
+                'environment' => $module['environment'] ?? 'JSON',
+                'number' => (int) ($module['number'] ?? 0),
+                'item_id' => (string) ($module['item_id'] ?? ''),
+                'catalog_file' => (string) ($module['catalog_file'] ?? ''),
+                'catalog_code' => (string) ($module['catalog_code'] ?? ''),
+                'catalog_name' => (string) ($module['catalog_name'] ?? ''),
+                'reference' => trim((string) ($module['reference'] ?? '')),
+                'description' => trim((string) ($module['description'] ?? '')),
+                'alternate_code' => trim((string) ($module['alternate_code'] ?? '')),
+                'manufacturing_note' => trim((string) ($module['manufacturing_note'] ?? '')),
+                'quantity' => (float) ($module['quantity'] ?? 1),
+                'pvp' => (float) ($module['pvp'] ?? 0),
+                'total' => (float) ($module['total'] ?? 0),
+                'dx' => (float) ($module['dx'] ?? 0),
+                'dy' => (float) ($module['dy'] ?? 0),
+                'dz' => (float) ($module['dz'] ?? 0),
+                'catalog' => (string) ($module['catalog'] ?? ''),
+                'model' => (string) ($module['model'] ?? ''),
+                'color' => (string) ($module['color'] ?? ''),
+            ];
+        }
+
+        $despiece = [];
+
+        foreach ($partsRaw as $index => $part) {
+            $materialRaw = trim((string) ($part['material_raw'] ?? ''));
+            $material = trim((string) ($part['material'] ?? ''));
+
+            if ($material === '' && $materialRaw !== '') {
+                $materialInfo = $this->splitMaterialAndColor($materialRaw);
+            } else {
+                $materialInfo = [
+                    'material' => $material,
+                    'color_code' => trim((string) ($part['color_code'] ?? '')),
+                    'color_description' => trim((string) ($part['color_description'] ?? '')),
+                ];
+            }
+
+            $row = [
+                'line_number' => (int) ($part['line_number'] ?? ($index + 1)),
+                'type_code' => (int) ($part['type_code'] ?? 0),
+                'type_name' => $this->partTypeName((int) ($part['type_code'] ?? 0)),
+                'part' => trim((string) ($part['part'] ?? '')),
+                'quantity' => (float) ($part['quantity'] ?? 0),
+                'length' => (float) ($part['length'] ?? 0),
+                'width' => (float) ($part['width'] ?? 0),
+                'thickness' => (float) ($part['thickness'] ?? 0),
+                'material_code' => trim((string) ($part['material_code'] ?? '')),
+                'material' => $materialInfo['material'],
+                'color_code' => $materialInfo['color_code'],
+                'color_description' => $materialInfo['color_description'],
+                'module_number' => (int) ($part['module_number'] ?? 0),
+                'module_reference' => trim((string) ($part['module_reference'] ?? '')),
+            ];
+
+            $row = $this->applyMaterialCostToDespieceRow($row);
+
+            $despiece[] = $row;
+        }
+
+        return [
+            'header' => [
+                'estimate_id' => (string) ($header['estimate_id'] ?? ''),
+                'project_name' => (string) ($header['project_name'] ?? 'Proyecto JSON EDIFICAR'),
+                'company_name' => (string) ($header['company_name'] ?? ''),
+                'client_name' => (string) ($header['client_name'] ?? ''),
+                'designer' => (string) ($header['designer'] ?? ''),
+                'seller_name' => (string) ($header['seller_name'] ?? ''),
+                'city' => (string) ($header['city'] ?? ''),
+                'country' => (string) ($header['country'] ?? ''),
+                'currency' => (string) ($header['currency'] ?? 'USD'),
+                'state' => (string) ($header['state'] ?? ''),
+                'creation_date' => (string) ($header['creation_date'] ?? ''),
+                'update_date' => (string) ($header['update_date'] ?? ''),
+                'total_without_tax' => (float) ($header['total_without_tax'] ?? 0),
+                'total_with_tax' => (float) ($header['total_with_tax'] ?? 0),
+            ],
+            'headings' => [],
+            'modules' => $modules,
+            'despiece' => $despiece,
+            'files' => [
+                'xml' => null,
+                'txt' => $fileName,
+                'scn' => null,
+                'json' => $fileName,
+            ],
+        ];
+    }
+
+    private function applyMaterialCostToDespieceRow(array $row): array
+    {
+        $materialPrice = \App\Models\MaterialPrice::query()
+            ->where('material_code', $row['material_code'])
+            ->where('is_active', true)
+            ->first();
+
+        $unitType = $materialPrice->unit_type ?? 'm2';
+        $unitCost = (float) ($materialPrice->unit_cost ?? 0);
+        $wastePercent = (float) ($materialPrice->waste_percent ?? 0);
+
+        $quantity = (float) ($row['quantity'] ?? 0);
+        $lengthMm = (float) ($row['length'] ?? 0);
+        $widthMm = (float) ($row['width'] ?? 0);
+
+        $consumption = 0;
+        $areaM2 = 0;
+        $linearM = 0;
+
+        if ($unitType === 'm2') {
+            $areaM2 = ($lengthMm / 1000) * ($widthMm / 1000) * $quantity;
+            $consumption = $areaM2;
+        } elseif ($unitType === 'ml') {
+            $linearM = ($lengthMm / 1000) * $quantity;
+            $consumption = $linearM;
+        } else {
+            $consumption = $quantity;
+        }
+
+        $baseCost = $consumption * $unitCost;
+        $wasteCost = $baseCost * ($wastePercent / 100);
+        $totalCost = $baseCost + $wasteCost;
+
+        $row['unit_type'] = $unitType;
+        $row['consumption'] = round($consumption, 4);
+        $row['area_m2'] = round($areaM2, 4);
+        $row['linear_m'] = round($linearM, 4);
+        $row['unit_cost'] = round($unitCost, 4);
+        $row['base_cost'] = round($baseCost, 4);
+        $row['waste_percent'] = round($wastePercent, 2);
+        $row['waste_cost'] = round($wasteCost, 4);
+        $row['total_cost'] = round($totalCost, 4);
+
+        return $row;
+    }
+    public function exportEdificarJson(\Illuminate\Http\Request $request)
+    {
+        $data = session('edificar_preview_data');
+
+        if (!is_array($data)) {
+            return back()->withErrors(['data' => 'No existe preview activo para exportar JSON.']);
+        }
+
+        $payload = $this->buildEdificarImportJson($data);
+
+        $projectName = preg_replace('/[^A-Za-z0-9_\-]/', '_', $payload['header']['project_name'] ?? 'edificar_import');
+        $fileName = 'edificar_import_' . $projectName . '_' . date('Ymd_His') . '.json';
+
+        return response(json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE))
+            ->header('Content-Type', 'application/json; charset=UTF-8')
+            ->header('Content-Disposition', 'attachment; filename="' . $fileName . '"');
+    }
+
+    private function buildEdificarImportJson(array $data): array
+    {
+        $header = $data['header'] ?? [];
+        $modules = $data['modules'] ?? [];
+        $despiece = $data['despiece'] ?? [];
+
+        return [
+            'version' => '1.0',
+            'source' => 'edificar_xml_txt_bridge',
+            'generated_at' => now()->toIso8601String(),
+            'header' => [
+                'estimate_id' => $header['estimate_id'] ?? '',
+                'project_name' => $header['project_name'] ?? '',
+                'company_name' => $header['company_name'] ?? '',
+                'client_name' => $header['client_name'] ?? '',
+                'designer' => $header['designer'] ?? '',
+                'seller_name' => $header['seller_name'] ?? '',
+                'city' => $header['city'] ?? '',
+                'country' => $header['country'] ?? '',
+                'currency' => $header['currency'] ?? 'USD',
+                'state' => $header['state'] ?? '',
+                'creation_date' => $header['creation_date'] ?? '',
+                'update_date' => $header['update_date'] ?? '',
+                'total_without_tax' => (float) ($header['total_without_tax'] ?? 0),
+                'total_with_tax' => (float) ($header['total_with_tax'] ?? 0),
+            ],
+            'modules' => collect($modules)->map(function ($module) {
+                return [
+                    'environment' => $module['environment'] ?? '',
+                    'number' => (int) ($module['number'] ?? 0),
+                    'item_id' => $module['item_id'] ?? '',
+                    'catalog_file' => $module['catalog_file'] ?? '',
+                    'catalog_code' => $module['catalog_code'] ?? '',
+                    'catalog_name' => $module['catalog_name'] ?? '',
+                    'reference' => $module['reference'] ?? '',
+                    'xml_reference' => $module['xml_reference'] ?? null,
+                    'description' => $module['description'] ?? '',
+                    'alternate_code' => $module['alternate_code'] ?? '',
+                    'manufacturing_note' => $module['manufacturing_note'] ?? '',
+                    'quantity' => (float) ($module['quantity'] ?? 1),
+                    'dx' => (float) ($module['dx'] ?? 0),
+                    'dy' => (float) ($module['dy'] ?? 0),
+                    'dz' => (float) ($module['dz'] ?? 0),
+                    'pvp' => (float) ($module['pvp'] ?? 0),
+                    'total' => (float) ($module['total'] ?? 0),
+                ];
+            })->values()->all(),
+            'parts' => collect($despiece)->map(function ($row) {
+                return [
+                    'line_number' => (int) ($row['line_number'] ?? 0),
+                    'module_number' => (int) ($row['module_number'] ?? 0),
+                    'module_reference' => $row['module_reference'] ?? '',
+                    'type_code' => (int) ($row['type_code'] ?? 0),
+                    'part' => $row['part'] ?? '',
+                    'quantity' => (float) ($row['quantity'] ?? 0),
+                    'length' => (float) ($row['length'] ?? 0),
+                    'width' => (float) ($row['width'] ?? 0),
+                    'thickness' => (float) ($row['thickness'] ?? 0),
+                    'material_code' => $row['material_code'] ?? '',
+                    'material_raw' => trim(($row['material'] ?? '') . ' _' . ($row['color_code'] ?? '') . ' ' . ($row['color_description'] ?? '')),
+                    'material' => $row['material'] ?? '',
+                    'color_code' => $row['color_code'] ?? '',
+                    'color_description' => $row['color_description'] ?? '',
+                ];
+            })->values()->all(),
+        ];
+    }
+}

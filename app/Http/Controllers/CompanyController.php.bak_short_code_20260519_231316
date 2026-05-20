@@ -25,7 +25,6 @@ class CompanyController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'required|string|max:50|unique:companies,code',
-            'short_code' => 'required|string|max:10|unique:companies,short_code',
             'max_users' => 'required|integer|min:1',
             'logo' => 'nullable|image|max:2048',
         ]);
@@ -39,7 +38,6 @@ class CompanyController extends Controller
         Company::create([
             'name' => $request->name,
             'code' => strtoupper($request->code),
-            'short_code' => strtoupper($request->short_code),
             'max_users' => $request->max_users,
             'logo' => $logoPath,
             'status' => 'active',
@@ -59,7 +57,6 @@ class CompanyController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'required|string|max:50|unique:companies,code,' . $company->id,
-            'short_code' => 'required|string|max:10|unique:companies,short_code,' . $company->id,
             'max_users' => 'required|integer|min:1',
             'logo' => 'nullable|image|max:2048',
         ]);
@@ -78,7 +75,6 @@ class CompanyController extends Controller
         $company->update([
             'name' => $request->name,
             'code' => strtoupper($request->code),
-            'short_code' => strtoupper($request->short_code),
             'max_users' => $request->max_users,
             'logo' => $logoPath,
         ]);

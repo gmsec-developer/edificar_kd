@@ -39,20 +39,6 @@
             </div>
 
             <div style="margin-bottom:15px;">
-                <label>Codigo corto</label>
-                <input type="text"
-                    name="short_code"
-                    value="{{ old('short_code') }}"
-                    maxlength="10"
-                    required
-                    style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px;">
-
-                <div style="font-size:12px; color:#6b7280; margin-top:4px;">
-                    Ejemplo: ZUH, MUB, GMS.
-                </div>
-            </div>
-
-            <div style="margin-bottom:15px;">
                 <label>Maximo de usuarios</label>
                 <input type="number"
                        name="max_users"
