@@ -93,6 +93,16 @@ Route::middleware(['auth', 'company.active', 'permission:settings.edit'])->group
     Route::post('settings', [App\Http\Controllers\SettingController::class, 'update'])->name('settings.update');
 });
 
+
+Route::middleware(['auth', 'company.active', 'permission:company-settings.view'])->group(function () {
+    Route::get('mi-empresa', [App\Http\Controllers\CompanyController::class, 'mySettings'])
+        ->name('company-settings.index');
+});
+
+Route::middleware(['auth', 'company.active', 'permission:company-settings.edit'])->group(function () {
+    Route::put('mi-empresa', [App\Http\Controllers\CompanyController::class, 'updateMySettings'])
+        ->name('company-settings.update');
+});
 Route::middleware(['auth', 'company.active', 'permission:companies.view'])->group(function () {
     Route::get('companies', [App\Http\Controllers\CompanyController::class, 'index'])->name('companies.index');
 });
@@ -118,28 +128,24 @@ Route::middleware(['auth', 'company.active', 'permission:companies.toggle'])->gr
 
 
 Route::resource('module-prices', \App\Http\Controllers\ModulePriceController::class)
-    ->only(['index', 'update'])
-    ->middleware(['auth', 'company.active', 'permission:projects.import']);
+    ->only(['index'])
+    ->middleware(['auth', 'company.active', 'permission:module-prices.view']);
+
+Route::resource('module-prices', \App\Http\Controllers\ModulePriceController::class)
+    ->only(['update'])
+    ->middleware(['auth', 'company.active', 'permission:module-prices.edit']);
 Route::resource('material-prices', MaterialPriceController::class)
-    ->only(['index', 'edit', 'update'])
-    ->middleware(['auth', 'company.active', 'permission:projects.import']);
+    ->only(['index'])
+    ->middleware(['auth', 'company.active', 'permission:material-prices.view']);
+
+Route::resource('material-prices', MaterialPriceController::class)
+    ->only(['edit', 'update'])
+    ->middleware(['auth', 'company.active', 'permission:material-prices.edit']);
 Route::post('/material-prices/bulk-update', [\App\Http\Controllers\MaterialPriceController::class, 'bulkUpdate'])
-    ->middleware(['auth', 'company.active', 'permission:projects.import'])
+    ->middleware(['auth', 'company.active', 'permission:material-prices.bulk-update'])
     ->name('material-prices.bulk-update');
-Route::get('/projects/clipboard/import', [\App\Http\Controllers\ProjectController::class, 'clipboardImport'])
+Route::post('/projects/edf/preview', [\App\Http\Controllers\ProjectController::class, 'edfPreview'])
     ->middleware(['auth', 'company.active', 'permission:projects.import'])
-    ->name('projects.clipboard.import');
+    ->name('projects.edf.preview');
 
-Route::post('/projects/clipboard/preview', [\App\Http\Controllers\ProjectController::class, 'clipboardPreview'])
-    ->middleware(['auth', 'company.active', 'permission:projects.import'])
-    ->name('projects.clipboard.preview');
-Route::get('/projects/json/import', [\App\Http\Controllers\ProjectController::class, 'jsonImport'])
-    ->middleware(['auth', 'company.active', 'permission:projects.import'])
-    ->name('projects.json.import');
 
-Route::post('/projects/json/preview', [\App\Http\Controllers\ProjectController::class, 'jsonPreview'])
-    ->middleware(['auth', 'company.active', 'permission:projects.import'])
-    ->name('projects.json.preview');
-Route::post('/projects/export-json', [\App\Http\Controllers\ProjectController::class, 'exportEdificarJson'])
-    ->middleware(['auth', 'company.active', 'permission:projects.view'])
-    ->name('projects.export-json');

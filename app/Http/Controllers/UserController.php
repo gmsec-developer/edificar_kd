@@ -41,7 +41,13 @@ class UserController extends Controller
         }
 
         $users = $query->orderBy('name')->paginate(10)->withQueryString();
-        $roles = \Spatie\Permission\Models\Role::orderBy('name')->get();
+        $rolesQuery = \Spatie\Permission\Models\Role::orderByRaw("CASE WHEN name = 'superadmin' THEN 1 WHEN name = 'Administrador empresa' THEN 2 WHEN name = 'Supervisor' THEN 3 WHEN name = 'Disenador' THEN 4 WHEN name = 'Costos' THEN 5 WHEN name = 'Auditor' THEN 6 WHEN name = 'Visitante' THEN 7 ELSE 99 END")->orderBy('name');
+
+        if (!auth()->user()->hasRole('superadmin')) {
+            $rolesQuery->whereIn('name', ['Administrador empresa', 'Supervisor', 'Visitante']);
+        }
+
+        $roles = $rolesQuery->get();
         $companies = \App\Models\Company::orderBy('name')->get();
 
         return view('users.index', compact('users', 'roles', 'companies'));
@@ -49,7 +55,13 @@ class UserController extends Controller
 
     public function create()
     {
-        $roles = \Spatie\Permission\Models\Role::orderBy('name')->get();
+        $rolesQuery = \Spatie\Permission\Models\Role::orderByRaw("CASE WHEN name = 'superadmin' THEN 1 WHEN name = 'Administrador empresa' THEN 2 WHEN name = 'Supervisor' THEN 3 WHEN name = 'Disenador' THEN 4 WHEN name = 'Costos' THEN 5 WHEN name = 'Auditor' THEN 6 WHEN name = 'Visitante' THEN 7 ELSE 99 END")->orderBy('name');
+
+        if (!auth()->user()->hasRole('superadmin')) {
+            $rolesQuery->whereIn('name', ['Administrador empresa', 'Supervisor', 'Visitante']);
+        }
+
+        $roles = $rolesQuery->get();
         $companies = \App\Models\Company::orderBy('name')->get();
 
         return view('users.create', compact('roles', 'companies'));
@@ -65,6 +77,18 @@ class UserController extends Controller
             'role' => ['required', 'exists:roles,name'],
             'avatar' => ['nullable', 'image', 'max:2048'],
         ]);
+
+        if (!auth()->user()->hasRole('superadmin') && $request->role === 'superadmin') {
+            return back()
+                ->withInput()
+                ->withErrors(['role' => 'No tienes permisos para asignar el rol Superadmin.']);
+        }
+
+        if (!auth()->user()->hasRole('superadmin') && (int) $request->company_id !== (int) auth()->user()->company_id) {
+            return back()
+                ->withInput()
+                ->withErrors(['company_id' => 'No puedes crear usuarios en otra empresa.']);
+        }
 
         $avatarPath = null;
 
@@ -97,7 +121,13 @@ class UserController extends Controller
 
     public function edit(User $user)
     {
-        $roles = \Spatie\Permission\Models\Role::orderBy('name')->get();
+        $rolesQuery = \Spatie\Permission\Models\Role::orderByRaw("CASE WHEN name = 'superadmin' THEN 1 WHEN name = 'Administrador empresa' THEN 2 WHEN name = 'Supervisor' THEN 3 WHEN name = 'Disenador' THEN 4 WHEN name = 'Costos' THEN 5 WHEN name = 'Auditor' THEN 6 WHEN name = 'Visitante' THEN 7 ELSE 99 END")->orderBy('name');
+
+        if (!auth()->user()->hasRole('superadmin')) {
+            $rolesQuery->whereIn('name', ['Administrador empresa', 'Supervisor', 'Visitante']);
+        }
+
+        $roles = $rolesQuery->get();
         $companies = \App\Models\Company::orderBy('name')->get();
 
         return view('users.edit', compact('user', 'roles', 'companies'));
@@ -112,6 +142,23 @@ class UserController extends Controller
             'role' => ['required', 'exists:roles,name'],
             'avatar' => ['nullable', 'image', 'max:2048'],
         ]);
+
+        if (!auth()->user()->hasRole('superadmin') && $user->hasRole('superadmin')) {
+            return back()
+                ->withErrors(['user' => 'No tienes permisos para modificar un usuario Superadmin.']);
+        }
+
+        if (!auth()->user()->hasRole('superadmin') && $request->role === 'superadmin') {
+            return back()
+                ->withInput()
+                ->withErrors(['role' => 'No tienes permisos para asignar el rol Superadmin.']);
+        }
+
+        if (!auth()->user()->hasRole('superadmin') && (int) $request->company_id !== (int) auth()->user()->company_id) {
+            return back()
+                ->withInput()
+                ->withErrors(['company_id' => 'No puedes mover usuarios a otra empresa.']);
+        }
 
         $oldData = $user->only(['name', 'email', 'company_id', 'is_active', 'avatar']);
         $oldData['role'] = $user->roles->pluck('name')->first();
@@ -225,3 +272,6 @@ class UserController extends Controller
             ->with('success', 'Usuario eliminado correctamente');
     }
 }
+
+
+
